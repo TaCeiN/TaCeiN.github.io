@@ -29,12 +29,13 @@
             width: 100vw;
             height: 100vh;
             z-index: 1;
+            background: #000;
         }
 
-        #video-container iframe {
+        #video-container video {
             width: 100%;
             height: 100%;
-            border: none;
+            object-fit: cover;
             background-color: #000;
         }
 
@@ -97,41 +98,98 @@
             font-size: 0.9rem;
             margin-top: 10px;
         }
+
+        .error-message {
+            color: #ff4444;
+            font-size: 1.1rem;
+            margin-top: 20px;
+            text-align: center;
+            display: none;
+        }
     </style>
 </head>
 <body>
-    <div id="video-container"></div>
+    <div id="video-container">
+        <video id="video" preload="auto" controls playsinline webkit-playsinline>
+            <source src="asset.mp4" type="video/mp4">
+            Ваш браузер не поддерживает воспроизведение видео.
+        </video>
+    </div>
+    
     <div id="play-overlay" onclick="startVideo()">
         <div class="play-button"></div>
         <div class="play-text">Нажмите для воспроизведения</div>
         <div class="sub-text">Видео будет воспроизводиться на весь экран</div>
+        <div class="error-message" id="error-message"></div>
     </div>
 
     <script>
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('play-overlay');
+        const errorMessage = document.getElementById('error-message');
+
+        video.addEventListener('error', function(e) {
+            console.error('Ошибка загрузки видео:', e);
+            errorMessage.textContent = 'Не удалось загрузить видео. Проверьте, что файл asset.mp4 находится в той же директории.';
+            errorMessage.style.display = 'block';
+        });
+
         function startVideo() {
-            const overlay = document.getElementById('play-overlay');
             overlay.classList.add('hidden');
-
-            const container = document.getElementById('video-container');
-            const iframe = document.createElement('iframe');
-            iframe.src = 'https://vk.com/video_ext.php?oid=-220526017&id=456240075&hash=0717b1360163c80c&hd=2';
-            iframe.width = '100%';
-            iframe.height = '100%';
-            iframe.frameBorder = '0';
-            iframe.allowFullscreen = true;
-            iframe.style.backgroundColor = '#000';
-            iframe.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
-            container.appendChild(iframe);
-
-            // Попытка войти в полноэкранный режим
-            if (iframe.requestFullscreen) {
-                iframe.requestFullscreen();
-            } else if (iframe.webkitRequestFullscreen) {
-                iframe.webkitRequestFullscreen();
-            } else if (iframe.msRequestFullscreen) {
-                iframe.msRequestFullscreen();
+            
+            const playPromise = video.play();
+            
+            if (playPromise !== undefined) {
+                playPromise.then(() => {
+                    // Видео успешно запустилось
+                    enterFullscreen();
+                }).catch(error => {
+                    console.error('Автозапуск заблокирован:', error);
+                    // Если автозапуск заблокирован, пробуем воспроизвести с звуком выключенным
+                    video.muted = true;
+                    video.play().then(() => {
+                        enterFullscreen();
+                    }).catch(() => {
+                        // Показываем оверлей обратно если ничего не помогло
+                        overlay.classList.remove('hidden');
+                        errorMessage.textContent = 'Нажмите на видео для воспроизведения';
+                        errorMessage.style.display = 'block';
+                    });
+                });
             }
         }
+
+        function enterFullscreen() {
+            if (video.requestFullscreen) {
+                video.requestFullscreen();
+            } else if (video.webkitRequestFullscreen) {
+                video.webkitRequestFullscreen();
+            } else if (video.webkitEnterFullscreen) {
+                video.webkitEnterFullscreen(); // Для iOS Safari
+            } else if (video.msRequestFullscreen) {
+                video.msRequestFullscreen();
+            }
+        }
+
+        // Обработка выхода из полноэкранного режима
+        document.addEventListener('fullscreenchange', function() {
+            if (!document.fullscreenElement && !video.paused) {
+                // Видео продолжает воспроизводиться после выхода из fullscreen
+            }
+        });
+
+        // Двойной клик для полноэкранного режима
+        video.addEventListener('dblclick', function() {
+            if (!document.fullscreenElement) {
+                enterFullscreen();
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                } else if (document.webkitExitFullscreen) {
+                    document.webkitExitFullscreen();
+                }
+            }
+        });
     </script>
 </body>
 </html>
