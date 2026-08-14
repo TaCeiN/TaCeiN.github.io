@@ -35,6 +35,7 @@
             width: 100%;
             height: 100%;
             border: none;
+            background-color: #000;
         }
 
         #play-overlay {
@@ -113,9 +114,13 @@
 
             const container = document.getElementById('video-container');
             const iframe = document.createElement('iframe');
-            iframe.src = 'https://www.youtube.com/embed/9vFoUnkc1HU?list=PLOrk-6uR94K528klxRx7Gat9mHGiJOhK4&autoplay=1&rel=0&modestbranding=1&controls=1&showinfo=0';
-            iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+            iframe.src = 'https://vk.com/video_ext.php?oid=-220526017&id=456240075&hash=0717b1360163c80c&hd=2';
+            iframe.width = '100%';
+            iframe.height = '100%';
+            iframe.frameBorder = '0';
             iframe.allowFullscreen = true;
+            iframe.style.backgroundColor = '#000';
+            iframe.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
             container.appendChild(iframe);
 
             // Попытка войти в полноэкранный режим
