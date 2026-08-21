@@ -11,9 +11,19 @@
  * Для Pages сюда пишется полный адрес бэкенда, например:
  *   export const API_BASE = 'https://zarechye-api.vercel.app';
  */
-export const API_BASE = '';
-// Для https://tacein.github.io сюда вписывается адрес бэкенда с Vercel:
-//   export const API_BASE = 'https://zarechye-api.vercel.app';
+/**
+ * Адрес выбирается по домену, а не правится руками перед деплоем.
+ *
+ * Так исключается целый класс путаницы: с прописанным вручную адресом
+ * локальный фронт молча ходит в облачный бэкенд, показывает его данные,
+ * и это выглядит как баги в приложении. Я на это уже потратил полчаса.
+ */
+const REMOTE_API = 'https://dom-3-beta.vercel.app';
+
+export const API_BASE = typeof location !== 'undefined'
+  && /\.github\.io$/.test(location.hostname)
+  ? REMOTE_API
+  : '';
 
 /**
  * Хранилище токена сессии.

@@ -14,7 +14,7 @@ import { esc, html, toast, withLoading, errorState } from '../ui.js';
 let cameraSession = null;
 
 export function renderLogin(state) {
-  const { config, error, name } = state;
+  const { config, error, name, addingAddress } = state;
   const canScanNative = platform.inMax;
   const canScanCamera = cameraAvailable();
 
@@ -25,11 +25,17 @@ export function renderLogin(state) {
           <svg width="34" height="34" viewBox="0 0 24 24" fill="none"><path d="M4 10.5L12 4L20 10.5V19.5C20 20 19.6 20.5 19 20.5H5C4.4 20.5 4 20 4 19.5V10.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
         </div>
         <div class="dt-title" style="margin-top:0">
-          ${name ? `${esc(name)},<br>подтвердите адрес` : 'Заречье. Дом'}
+          ${addingAddress
+            ? 'Квитанция нового адреса'
+            : name ? `${esc(name)},<br>подтвердите адрес` : 'Заречье. Дом'}
         </div>
         <div class="success-p" style="margin:10px auto 0">
-          Отсканируйте QR-код с квитанции ЖКУ — приложение само определит
-          адрес, лицевой счёт и вашу управляющую компанию
+          ${addingAddress
+            ? `Отсканируйте QR-код квитанции второго адреса — он добавится
+               к вашему аккаунту. Если лицевой счёт уже занят, доступ
+               подтвердит его собственник.`
+            : `Отсканируйте QR-код с квитанции ЖКУ — приложение само определит
+               адрес, лицевой счёт и вашу управляющую компанию`}
         </div>
       </div>
 
@@ -60,7 +66,7 @@ export function renderLogin(state) {
         В нём уже есть всё нужное — вводить ничего не придётся.
       </div>
 
-      ${config?.demoMode ? `
+      ${config?.demoMode && !addingAddress ? `
         <div class="field-label" style="margin-top:26px">Демо-режим</div>
         <div class="list">
           <button class="row tappable" data-action="demo" data-acc="4460153">

@@ -1,0 +1,126 @@
+/**
+ * Кабинет диспетчера.
+ *
+ * Отдельная страница и отдельные стили: это рабочее место за монитором,
+ * а не приложение в кармане. Токены и палитра берутся из styles.css,
+ * поэтому тёмная и светлая темы работают здесь бесплатно.
+ *
+ * Главное требование к вёрстке — плотность. Диспетчер смотрит очередь
+ * весь день, и ему важно видеть много строк сразу, а не любоваться
+ * воздухом между карточками.
+ */
+
+.dsp-body {
+  min-height: 100vh;
+  background: var(--bg-ground);
+  color: var(--tx);
+  padding: 0;
+  display: block;
+}
+
+.dsp-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 14px 24px;
+  background: var(--bg-card);
+  box-shadow: inset 0 -1px 0 var(--sep);
+  position: sticky; top: 0; z-index: 10;
+}
+.dsp-brand { display: flex; align-items: center; gap: 12px; }
+.dsp-logo {
+  width: 36px; height: 36px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--brand); color: #fff; flex-shrink: 0;
+}
+.dsp-title { font-size: 17px; font-weight: 600; color: var(--tx-strong); letter-spacing: -.02em; }
+.dsp-sub { font-size: 13px; color: var(--tx-2); margin-top: 1px; }
+.dsp-logout {
+  font-size: 14px; font-weight: 500; color: var(--tx-2);
+  padding: 9px 14px; border-radius: var(--r-xs); background: var(--fade);
+}
+
+.dsp-main { max-width: 1180px; margin: 0 auto; padding: 24px 24px 64px; }
+
+/* ─────────────── вход ─────────────── */
+
+.dsp-login {
+  max-width: 380px; margin: 56px auto 0;
+  background: var(--bg-card); border-radius: var(--r-m); padding: 28px;
+}
+.dsp-login h1 { font-size: 22px; font-weight: 700; letter-spacing: -.02em; color: var(--tx-strong); }
+.dsp-login p { font-size: 14px; color: var(--tx-2); margin-top: 8px; line-height: 1.45; }
+
+/* ─────────────── счётчики очереди ─────────────── */
+
+.dsp-counters { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+.dsp-counter {
+  flex: 1 1 150px; background: var(--bg-card);
+  border-radius: var(--r-s); padding: 14px 16px; text-align: left;
+}
+.dsp-counter .n {
+  font-size: 26px; font-weight: 700; letter-spacing: -.02em;
+  color: var(--tx-strong); font-variant-numeric: tabular-nums;
+}
+.dsp-counter .l { font-size: 13px; color: var(--tx-2); margin-top: 2px; }
+.dsp-counter.warn .n { color: var(--negative); }
+.dsp-counter.on { box-shadow: inset 0 0 0 1.5px var(--accent); }
+
+/* ─────────────── очередь ─────────────── */
+
+.dsp-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+
+.dsp-queue { display: flex; flex-direction: column; gap: 1px; background: var(--sep-soft); border-radius: var(--r-m); overflow: hidden; }
+
+.dsp-row {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 2.2fr) minmax(0, 1.4fr) 128px 150px;
+  gap: 14px; align-items: center;
+  padding: 13px 16px; background: var(--bg-card); text-align: left; width: 100%;
+}
+.dsp-row:hover { background: var(--press); }
+.dsp-row .num { font-size: 13px; color: var(--tx-3); font-variant-numeric: tabular-nums; }
+.dsp-row .ttl {
+  display: block; font-size: 15px; font-weight: 500; color: var(--tx);
+  letter-spacing: -.014em; line-height: 1.3;
+}
+.dsp-row .cat { display: block; font-size: 13px; color: var(--tx-2); margin-top: 3px; }
+.dsp-row .pill { justify-self: start; }
+.dsp-row .addr { font-size: 13px; color: var(--tx-2); line-height: 1.35; }
+
+/* Просрочка обязана быть заметна с другого конца комнаты: это единственная
+   причина, по которой диспетчер вообще открывает этот экран */
+.dsp-sla { font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.dsp-sla.ok { color: var(--tx-2); }
+.dsp-sla.soon { color: var(--attention); }
+.dsp-sla.overdue { color: var(--negative); font-weight: 600; }
+
+.dsp-row.overdue { box-shadow: inset 3px 0 0 var(--negative); }
+
+/* ─────────────── карточка заявки ─────────────── */
+
+.dsp-detail { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+.dsp-card { background: var(--bg-card); border-radius: var(--r-m); padding: 20px; }
+.dsp-card + .dsp-card { margin-top: 16px; }
+.dsp-card h2 { font-size: 15px; font-weight: 600; color: var(--tx-strong); margin-bottom: 12px; }
+.dsp-back { font-size: 14px; color: var(--accent); margin-bottom: 14px; display: inline-block; }
+
+.dsp-kv { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 8px 14px; font-size: 14px; }
+.dsp-kv dt { color: var(--tx-2); }
+.dsp-kv dd { color: var(--tx); }
+
+.dsp-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.dsp-act {
+  font-size: 14px; font-weight: 500; padding: 10px 14px;
+  border-radius: var(--r-xs); background: var(--fade); color: var(--tx);
+}
+.dsp-act.primary { background: var(--accent); color: #fff; }
+.dsp-act.danger { background: var(--danger-soft); color: var(--negative); }
+.dsp-act.loading { color: transparent; pointer-events: none; }
+
+.dsp-empty { padding: 56px 20px; text-align: center; color: var(--tx-2); background: var(--bg-card); border-radius: var(--r-m); }
+
+@media (max-width: 900px) {
+  .dsp-detail { grid-template-columns: minmax(0, 1fr); }
+  .dsp-row { grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; }
+  .dsp-row .num, .dsp-row .addr { display: none; }
+  .dsp-main, .dsp-header { padding-left: 14px; padding-right: 14px; }
+}

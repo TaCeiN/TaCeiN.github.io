@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1E1F24">
+<meta name="description" content="Кабинет диспетчера управляющей компании: очередь заявок жителей со сроками реакции и видимой просрочкой.">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="../styles.css">
+<link rel="stylesheet" href="./dispatcher.css">
+<title>Кабинет диспетчера — Заречье. Дом</title>
+</head>
+<body class="dsp-body">
+
+<header class="dsp-header">
+  <div class="dsp-brand">
+    <span class="dsp-logo">
+      <svg viewBox="0 0 24 24" fill="none" width="20" height="20"><path d="M4 10.5L12 4L20 10.5V19.5C20 20 19.6 20.5 19 20.5H5C4.4 20.5 4 20 4 19.5V10.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+    </span>
+    <div>
+      <div class="dsp-title">Кабинет диспетчера</div>
+      <div class="dsp-sub" id="dspWho"></div>
+    </div>
+  </div>
+  <button class="dsp-logout" data-action="logout" hidden id="dspLogout">Выйти</button>
+</header>
+
+<main class="dsp-main" id="dspMain"></main>
+<div class="toast" id="toast"></div>
+
+<script type="module" src="./dispatcher.js"></script>
+</body>
+</html>

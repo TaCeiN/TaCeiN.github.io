@@ -44,6 +44,14 @@ async function request(method, path, payload) {
       method,
       headers,
       credentials: 'same-origin',
+      /**
+       * Без явного запрета браузер кэширует GET эвристически — даже когда
+       * сервер не просил. Человек видит начисление за прошлый месяц или
+       * статус заявки, который давно изменился, и это выглядит настоящим.
+       * Заголовок на сервере такой кэш не лечит: браузер до сервера
+       * просто не доходит.
+       */
+      cache: 'no-store',
       signal: controller.signal,
       body: payload === undefined ? undefined : JSON.stringify(payload),
     });
@@ -102,6 +110,8 @@ export const api = {
   loginDemo: (persAcc) => request('POST', '/api/auth/demo', { persAcc }),
   verifyPhone: (contact) => request('POST', '/api/auth/phone', contact),
   approveAccess: (bindingId) => request('POST', `/api/properties/${bindingId}/approve`, {}),
+  revokeAccess: (bindingId) => request('POST', `/api/properties/${bindingId}/revoke`, {}),
+  household: (propertyId) => request('GET', `/api/properties/${propertyId}/household`),
 
   requests: () => request('GET', '/api/requests'),
   request: (id) => request('GET', `/api/requests/${id}`),
