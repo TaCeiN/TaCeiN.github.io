@@ -75,6 +75,11 @@ export function loadingState(text = 'Загружаем…') {
  */
 export function errorState(error, retryAction) {
   const offline = error?.offline;
+  // Заголовок должен совпадать с диагнозом: «Нет связи» поверх текста
+  // «с вашим интернетом всё в порядке» противоречит сам себе
+  const title = error?.code === 'offline' ? 'Нет интернета'
+    : error?.code === 'timeout' || error?.code === 'server_unreachable' ? 'Сервер недоступен'
+    : 'Не удалось загрузить';
   return html`
     <div class="state">
       <div class="state-icon ${offline ? 'warn' : 'bad'}">
@@ -82,7 +87,7 @@ export function errorState(error, retryAction) {
           ? '<svg viewBox="0 0 24 24" fill="none"><path d="M12 3C7 3 3 6 1 9M12 3c5 0 9 3 11 6M12 9c-2.5 0-4.5 1.2-6 3m6-3c2.5 0 4.5 1.2 6 3M12 18v.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
           : '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v6M12 16.5v.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'}
       </div>
-      <div class="state-title">${offline ? 'Нет связи' : 'Не удалось загрузить'}</div>
+      <div class="state-title">${esc(title)}</div>
       <div class="state-text">${esc(error?.message ?? 'Попробуйте ещё раз')}</div>
       ${retryAction ? `<button class="btn-primary" style="max-width:220px" data-action="${esc(retryAction)}">Повторить</button>` : ''}
     </div>`;

@@ -58,12 +58,28 @@ async function request(method, path, payload) {
   } catch (error) {
     clearTimeout(timer);
     const aborted = error?.name === 'AbortError';
-    throw new ApiError(
-      aborted
-        ? 'Сервер долго не отвечает. Проверьте связь и попробуйте ещё раз.'
-        : 'Нет соединения. Проверьте интернет и попробуйте ещё раз.',
-      { offline: true, code: aborted ? 'timeout' : 'offline' },
-    );
+
+    /**
+     * «Интернета нет» и «наш сервер не отвечает» — разные беды, и лечатся
+     * они по-разному. Фронт лежит на GitHub Pages, а API на отдельной
+     * машине: если страница открылась, интернет у человека точно есть,
+     * и совет «проверьте интернет» отправляет чинить исправное.
+     *
+     * navigator.onLine врёт в одну сторону: false означает «сети точно нет»,
+     * true — лишь «интерфейс поднят». Поэтому доверяем только false.
+     */
+    const offline = navigator.onLine === false;
+
+    const message = offline
+      ? 'Нет интернета. Приложение продолжит работу, когда связь вернётся.'
+      : aborted
+        ? 'Сервер приложения не отвечает. Скорее всего, он сейчас недоступен — попробуйте через минуту.'
+        : 'Не удаётся связаться с сервером приложения. С вашим интернетом всё в порядке — недоступен наш сервер.';
+
+    throw new ApiError(message, {
+      offline: true,
+      code: offline ? 'offline' : aborted ? 'timeout' : 'server_unreachable',
+    });
   } finally {
     clearTimeout(timer);
   }
