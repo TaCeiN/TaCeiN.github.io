@@ -757,3 +757,81 @@ textarea.error, input.error{ border-color:var(--negative); }
   background:var(--danger-soft); color:var(--negative);
 }
 .vote-opt[disabled]{ opacity:.7; }
+
+/* ─────────────── переписка по заявке ─────────────── */
+
+/* Статус на деталке. Раньше он был виден только в списке: открыв заявку,
+   человек читал трек из трёх точек и не понимал, чем «нужны уточнения»
+   отличаются от «в работе» */
+.dt-status{ display:flex; margin-bottom:14px; }
+.dt-status .pill{ font-size:13px; padding:6px 11px; }
+
+/* Ход за жителем. Отдельная карточка, а не строка в истории: вопрос
+   диспетчера, потерянный в ленте событий, равносилен отсутствию вопроса */
+.ask-card{
+  background:var(--amber-soft); border-radius:var(--r-m);
+  padding:16px; margin-top:14px;
+}
+.ask-h{ font-size:15px; font-weight:600; color:var(--amber-deep); letter-spacing:-.014em; }
+.ask-q{
+  font-size:15px; color:var(--tx); line-height:1.45; margin-top:8px;
+  -webkit-user-select:text; user-select:text;
+}
+.ask-d{ font-size:13px; color:var(--tx-2); line-height:1.4; margin-top:10px; }
+.wrow .d.ask{ color:var(--amber-deep); font-weight:500; }
+
+/* Автор реплики: без имени в переписке нескольких жильцов на одном
+   адресе не разобрать, кто ответил */
+.tl-who{ font-size:12px; font-weight:500; color:var(--tx-2); margin-bottom:2px; }
+.tl-row.mine .tl-dot{ background:var(--accent); }
+.tl-row.mine .tl-who{ color:var(--accent); }
+
+img.photo-ph{ object-fit:cover; }
+
+/* Завершённое объявление: остаётся в ленте историей дома, но не спорит
+   за внимание с действующими */
+.row.faded, .wrow.faded { opacity: .6; }
+
+/* ─────────────── выбор адреса из справочника ─────────────── */
+
+/* Подсказка улиц. Список поверх формы, а не выпадающий select: вариантов
+   бывает несколько десятков, и человеку нужно видеть город рядом с улицей */
+.addr-hits {
+  margin-top: 6px; background: var(--bg-card); border-radius: var(--r-s);
+  max-height: 240px; overflow-y: auto;
+}
+.addr-hit {
+  display: block; width: 100%; text-align: left;
+  padding: 11px 14px; font-size: 15px; color: var(--tx);
+}
+.addr-hit + .addr-hit { box-shadow: inset 0 1px 0 var(--sep-soft); }
+.addr-hit:active { background: var(--press); }
+.addr-empty { padding: 12px 14px; font-size: 14px; color: var(--tx-2); }
+
+/* Дом, корпус и квартира в строку: вместе они короче одной улицы */
+.addr-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+
+/* ─────────────── иконки плиток услуг ─────────────── */
+
+/**
+ * Иконки набора дизайнера подключены МАСКОЙ, а не картинкой.
+ *
+ * Маска берёт из файла только форму, цвет задаёт плитка через
+ * background-color. Поэтому иконка остаётся белой на любом градиенте,
+ * а смена палитры не потребует переэкспорта у дизайнера.
+ */
+.svc-icon {
+  /* Внутри цветного квадрата плитки: сам квадрат остаётся градиентным */
+  display: block;
+  width: 24px;
+  height: 24px;
+  background-color: #fff;
+  -webkit-mask-image: var(--svc-icon);
+  mask-image: var(--svc-icon);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}

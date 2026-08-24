@@ -24,7 +24,27 @@ export class ApiError extends Error {
   }
 }
 
-async function request(method, path, payload) {
+/**
+ * Молчаливое восстановление сессии внутри MAX.
+ *
+ * Сессия живёт 30 дней, и рано или поздно протухает у всех. При запуске
+ * приложение и так входит заново по подписанным initData, а вот когда срок
+ * вышел ПОСРЕДИ работы, человека выбрасывало на экран сканирования — хотя
+ * подпись платформы приходит с каждым запросом и войти можно молча.
+ *
+ * Одна попытка на запрос: если и она не удалась, пусть решает экран входа.
+ */
+async function relogin() {
+  if (!platform.initData) return false;
+  try {
+    const result = await request('POST', '/api/auth/max', {}, false);
+    return result?.status === 'ok';
+  } catch {
+    return false;
+  }
+}
+
+async function request(method, path, payload, allowRelogin = true) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -94,7 +114,14 @@ async function request(method, path, payload) {
 
   if (!response.ok) {
     // Протухшая сессия не должна оставлять мёртвый токен в хранилище
-    if (response.status === 401) tokenStore.clear();
+    if (response.status === 401) {
+      tokenStore.clear();
+
+      // В MAX личность подтверждена подписью — входим заново и повторяем
+      if (allowRelogin && path !== '/api/auth/max' && await relogin()) {
+        return request(method, path, payload, false);
+      }
+    }
     throw new ApiError(
       body?.message ?? 'Что-то пошло не так. Попробуйте ещё раз.',
       { status: response.status, code: body?.error ?? 'http_error', body },
@@ -122,8 +149,10 @@ export const api = {
   },
 
   loginMax: () => request('POST', '/api/auth/max', {}),
-  loginQr: (qr) => request('POST', '/api/auth/qr', { qr }),
-  loginDemo: (persAcc) => request('POST', '/api/auth/demo', { persAcc }),
+  loginQr: (qr, extra) => request('POST', '/api/auth/qr', { qr, ...(extra ?? {}) }),
+  /** Подсказка улиц загруженного региона: адрес выбирается, а не пишется */
+  streets: (region, q) =>
+    request('GET', `/api/address/streets?region=${encodeURIComponent(region)}&q=${encodeURIComponent(q)}`),
   verifyPhone: (contact) => request('POST', '/api/auth/phone', contact),
   approveAccess: (bindingId) => request('POST', `/api/properties/${bindingId}/approve`, {}),
   revokeAccess: (bindingId) => request('POST', `/api/properties/${bindingId}/revoke`, {}),
@@ -134,9 +163,15 @@ export const api = {
   createRequest: (payload) => request('POST', '/api/requests', payload),
   rateRequest: (id, stars, comment) =>
     request('POST', `/api/requests/${id}/rating`, { stars, comment }),
+  commentRequest: (id, text) => request('POST', `/api/requests/${id}/comment`, { text }),
 
-  feed: (category) =>
-    request('GET', category ? `/api/feed?category=${encodeURIComponent(category)}` : '/api/feed'),
+  /**
+   * scope: 'house' — объявления дома (УК и председатель),
+   *        'market' — доска соседей. Без scope приходит всё: так главный
+   *        экран одним запросом получает и баннер аварии, и остальное.
+   */
+  feed: (scope) =>
+    request('GET', scope ? `/api/feed?scope=${encodeURIComponent(scope)}` : '/api/feed'),
   createPost: (payload) => request('POST', '/api/feed', payload),
 
   polls: () => request('GET', '/api/polls'),
@@ -147,4 +182,7 @@ export const api = {
   submitReading: (meterId, value, confirmed) =>
     request('POST', `/api/meters/${meterId}/readings`, { value, confirmed }),
   analytics: (propertyId) => request('GET', `/api/properties/${propertyId}/analytics`),
+
+  bills: (propertyId) => request('GET', `/api/properties/${propertyId}/bills`),
+  markPaid: (billId, paid) => request('POST', `/api/bills/${billId}/paid`, { paid }),
 };

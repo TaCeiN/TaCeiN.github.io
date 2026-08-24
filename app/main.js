@@ -1,6 +1,6 @@
 import { api, ApiError } from './api.js';
 import { platform } from './platform.js';
-import { $, setHtml, toast, loadingState, errorState } from './ui.js';
+import { $, setHtml, toast, loadingState, errorState, esc } from './ui.js';
 import { initRouter, reset, go, back, refresh, current } from './router.js';
 import { renderLogin, bindLogin, tryMaxLogin } from './screens/login.js';
 import { renderHome, homeSkeleton, shortAddress } from './screens/home.js';
@@ -51,7 +51,7 @@ const TITLES = {
   payment: ['Оплата ЖКУ', false],
   access: ['Доступ к адресу', false],
   properties: ['Мои адреса', false],
-  'add-property': ['Добавить адрес', false],
+  'add-property': ['Добавить квитанцию', false],
   emergency: ['Аварийные службы', false],
   privacy: ['Персональные данные', false],
   profile: ['Профиль', false],
@@ -78,8 +78,9 @@ async function renderScreen(name, params = {}) {
   const [title, showSub] = TITLES[name] ?? ['Заречье. Дом', false];
   const titleNode = $('#hdTitle');
   if (titleNode) titleNode.textContent = params.title ?? title;
+  // Пустую подпись не показываем: у дома может не быть управляющей организации
   const sub = $('#hdSub');
-  if (sub) sub.style.display = showSub ? 'flex' : 'none';
+  if (sub) sub.style.display = showSub && sub.innerHTML ? 'flex' : 'none';
 
   $('.app')?.classList.toggle('onboarding', name === 'login');
   syncTabs(name);
@@ -169,7 +170,7 @@ async function renderScreen(name, params = {}) {
         setHtml(host, await renderAccess(state));
         break;
       case 'payment':
-        setHtml(host, renderPayment(state));
+        setHtml(host, await renderPayment(state));
         break;
       case 'emergency':
         setHtml(host, renderEmergency(state));
@@ -268,6 +269,41 @@ async function handleAction(action, target) {
       }
       return;
 
+    /**
+     * Отказ по запросу доступа.
+     *
+     * Тот же эндпоинт, что и отзыв доступа: заявка помечается отозванной
+     * и уходит из списка. Без этой кнопки чужой человек, сфотографировавший
+     * квитанцию, висел в запросах вечно — разрешить было можно, отказать
+     * нечем.
+     */
+    case 'reject':
+      try {
+        await api.revokeAccess(target.dataset.id);
+        platform.haptic('medium');
+        toast('Запрос отклонён');
+        state.me = await api.me();
+        await refresh();
+      } catch (error) {
+        toast(error.message);
+      }
+      return;
+
+    /** Проверка, подтвердил ли собственник доступ. Сессия уже своя. */
+    case 'check-access':
+      try {
+        state.me = await api.me();
+        if (state.me.properties.length > 0) {
+          platform.haptic('medium');
+          state.currentProperty = state.me.properties[0];
+          return reset('home');
+        }
+        toast('Собственник пока не подтвердил доступ');
+      } catch (error) {
+        toast(error.message);
+      }
+      return;
+
     case 'pay':
       return go('payment');
 
@@ -309,9 +345,17 @@ export async function boot({ silent = false } = {}) {
 
   state.currentProperty = state.me.properties[0] ?? null;
 
+  /**
+   * Имя управляющей организации приходит из реестра и может отсутствовать:
+   * дома нет в реестре ГИС ЖКХ либо УК ещё не подтвердила адрес. Тогда
+   * подпись прячется целиком — подставлять сюда «УК» или демонстрационное
+   * название значит соврать жителю о том, кто его обслуживает.
+   */
   const sub = $('#hdSub');
-  if (sub && state.currentProperty) {
-    sub.innerHTML = `<span class="dot"></span>${state.currentProperty.ukName ?? 'УК'}`;
+  if (sub) {
+    const ukName = state.currentProperty?.ukName;
+    sub.innerHTML = ukName ? `<span class="dot"></span>${esc(ukName)}` : '';
+    sub.style.display = ukName ? 'flex' : 'none';
   }
 
   /**

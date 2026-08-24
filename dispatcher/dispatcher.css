@@ -124,3 +124,81 @@
   .dsp-row .num, .dsp-row .addr { display: none; }
   .dsp-main, .dsp-header { padding-left: 14px; padding-right: 14px; }
 }
+
+/* ─────────────── переписка и ход хода ─────────────── */
+
+/* Ответ жителя в очереди. Без пометки строка выглядит как вчерашняя,
+   и ответ на собственное уточнение диспетчер просто не замечает */
+.dsp-row.answered { box-shadow: inset 3px 0 0 var(--accent); }
+.dsp-row.answered.overdue {
+  box-shadow: inset 3px 0 0 var(--negative), inset 6px 0 0 var(--accent);
+}
+.dsp-row .cat { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsp-flag {
+  display: inline-block; margin-right: 8px; padding: 2px 7px; border-radius: var(--r-xs);
+  background: var(--blue-soft); color: var(--accent);
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .02em;
+  vertical-align: 1px;
+}
+
+.dsp-banner {
+  background: var(--blue-soft); color: var(--accent);
+  border-radius: var(--r-m); padding: 13px 16px; margin-bottom: 16px;
+  font-size: 14px; font-weight: 500;
+}
+.dsp-banner.wait { background: var(--amber-soft); color: var(--amber-deep); }
+
+.dsp-hint { font-size: 12px; color: var(--tx-2); line-height: 1.4; margin-top: 8px; }
+
+/* Лента событий в кабинете использует те же классы, что и у жителя:
+   обе стороны обязаны видеть одну и ту же переписку слово в слово */
+.dsp-card .timeline { margin-top: 4px; }
+
+/* ─────────────── разделы кабинета ─────────────── */
+
+.dsp-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.dsp-tab {
+  font-size: 14px; font-weight: 500; color: var(--tx-2);
+  padding: 9px 15px; border-radius: var(--r-xs); background: var(--bg-card);
+}
+.dsp-tab:hover { color: var(--tx); }
+.dsp-tab.on { background: var(--accent); color: #fff; }
+
+.dsp-select {
+  width: 100%; border: 1.5px solid transparent; border-radius: var(--r-s);
+  padding: 12px 14px; font-family: inherit; font-size: 15px;
+  color: var(--tx-strong); background: var(--fade); outline: none;
+}
+
+/* Список объявлений и председателей: строка = запись плюс её состояние
+   плюс действие. Плотно, потому что записей бывает много */
+.ha-list { display: flex; flex-direction: column; gap: 2px; }
+.ha-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 150px auto;
+  align-items: center; gap: 12px;
+  padding: 12px 4px;
+}
+.ha-row + .ha-row { box-shadow: inset 0 1px 0 var(--sep-soft); }
+.ha-row.off { opacity: .55; }
+.ha-t { font-size: 15px; font-weight: 500; color: var(--tx); letter-spacing: -.014em; }
+.ha-d { font-size: 13px; color: var(--tx-2); margin-top: 3px; }
+.ha-state { justify-self: start; }
+
+/* Пароль председателя виден один раз — его переписывают с экрана,
+   поэтому моноширинный и крупный */
+.ha-secret {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px; letter-spacing: .04em;
+}
+
+.ha-bars { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; }
+.ha-bar { display: grid; grid-template-columns: 160px 1fr 40px; align-items: center; gap: 10px; }
+.ha-bar .l { font-size: 13px; color: var(--tx-2); }
+.ha-bar .track { height: 6px; border-radius: 3px; background: var(--fade); overflow: hidden; }
+.ha-bar .fill { display: block; height: 100%; background: var(--accent); }
+.ha-bar .n { font-size: 13px; color: var(--tx-2); text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 720px) {
+  .ha-row { grid-template-columns: minmax(0, 1fr); }
+  .ha-bar { grid-template-columns: 110px 1fr 34px; }
+}

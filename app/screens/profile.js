@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { platform } from '../platform.js';
 import {
-  esc, html, money, formatDate, errorState, emptyState, toast, withLoading,
+  esc, html, money, formatDate, errorState, emptyState, toast, withLoading, plural,
 } from '../ui.js';
 import { readTheme, applyTheme } from '../theme.js';
 import { shortAddress } from './home.js';
@@ -47,14 +47,18 @@ export function renderProfile(state) {
           <span class="sq"><svg viewBox="0 0 20 20" fill="none"><path d="M3 8.5L10 3L17 8.5V16.5H3V8.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></span>
           <div class="content">
             <div class="t">${esc(shortAddress(p))}</div>
-            <div class="d">${esc(p.ukName ?? '')} · счёт ${esc(p.persAcc)}</div>
+            <div class="d">${esc(accountsLine(p))}</div>
           </div>
           <span class="pill ${p.role === 'owner' ? 'ok' : ''}">
             ${p.role === 'owner' ? 'собственник' : 'жилец'}
           </span>
         </button>`).join('')}
     </div>
-    <button class="btn-primary secondary" data-action="add-property">Добавить адрес</button>
+    <button class="btn-primary secondary" data-action="add-property">Добавить квитанцию</button>
+    <div class="dt-p" style="font-size:13px;color:var(--tx-2);margin-top:8px">
+      Свет, газ и вывоз мусора приходят отдельными квитанциями — они добавятся
+      к этой же квартире. Квитанция другого адреса заведёт второй адрес.
+    </div>
 
     <div class="field-label">Доступ и данные</div>
     <div class="list">
@@ -97,6 +101,54 @@ function initials(name) {
 
 /* ─────────────── адреса ─────────────── */
 
+/**
+ * Строка «метка — значение» в списке.
+ *
+ * Функция вызывалась на экране начислений, но не существовала: экран падал
+ * с «infoRow is not defined» и показывал «Не удалось загрузить» вместо
+ * реквизитов. Ошибка была не видна в тестах, потому что верстку они
+ * не исполняют.
+ */
+function infoRow(label, value) {
+  if (value === null || value === undefined || value === '') return '';
+  return html`
+    <div class="row">
+      <div class="content">
+        <div class="d">${esc(label)}</div>
+        <div class="t" style="margin-top:2px">${esc(value)}</div>
+      </div>
+    </div>`;
+}
+
+/** Человеческие названия услуг: коды наружу не показываем. */
+const SERVICE_LABEL = {
+  housing: 'ЖКУ',
+  electricity: 'Электроэнергия',
+  gas: 'Газ',
+  water: 'Вода',
+  heat: 'Отопление',
+  waste: 'Вывоз мусора',
+  overhaul: 'Капремонт',
+  other: 'Прочее',
+};
+
+/**
+ * Подпись под адресом.
+ *
+ * У квартиры несколько лицевых счетов, и раньше каждый был отдельным
+ * «адресом» в списке: одна квартира выглядела как четыре. Теперь адрес
+ * один, а под ним перечислены услуги.
+ */
+function accountsLine(p) {
+  const accounts = p.accounts ?? [];
+  if (accounts.length === 0) return p.ukName ?? '';
+
+  const names = accounts.map((a) => SERVICE_LABEL[a.service] ?? 'Прочее');
+  return names.length <= 3
+    ? names.join(' · ')
+    : `${names.slice(0, 2).join(' · ')} и ещё ${names.length - 2}`;
+}
+
 export function renderProperties(state) {
   const { me } = state;
   const currentId = state.currentProperty?.propertyId;
@@ -113,9 +165,14 @@ export function renderProperties(state) {
           <div class="content">
             <div class="t">${esc(shortAddress(p))}</div>
             <div class="d">
-              ${esc(p.ukName ?? '')}
+              ${esc(accountsLine(p))}
               ${p.bill?.sumKopecks != null ? ` · ${esc(money(p.bill.sumKopecks))}` : ''}
             </div>
+            ${p.addressSource === 'resident' ? `
+              <div class="d" style="color:var(--amber-deep)">
+                Адрес указали вы — управляющая компания ещё не сверила его
+                с лицевым счётом
+              </div>` : ''}
           </div>
         </button>`).join('')}
     </div>
@@ -133,11 +190,12 @@ export function renderProperties(state) {
           </div>`).join('')}
       </div>` : ''}
 
-    <button class="btn-primary" data-action="add-property">Добавить адрес по квитанции</button>
+    <button class="btn-primary" data-action="add-property">Добавить квитанцию</button>
 
     <div class="dt-p" style="color:var(--tx-2);font-size:13px">
-      Каждый адрес добавляется сканированием его квитанции. Если лицевой счёт
-      уже занят, доступ подтверждает собственник.
+      Квитанции за свет, газ и вывоз мусора добавляются к той же квартире —
+      адрес в них тот же. Квитанция по другому адресу заведёт второй адрес,
+      и если её лицевой счёт уже занят, доступ подтвердит собственник.
     </div>`;
 }
 
@@ -174,6 +232,8 @@ export async function renderAccess(state) {
             </div>
             <button class="pay-quickbtn tappable" style="background:var(--accent);color:#fff"
                     data-action="approve" data-id="${esc(p.bindingId)}">Разрешить</button>
+            <button class="pay-quickbtn tappable" style="background:var(--fade);color:var(--negative)"
+                    data-action="reject" data-id="${esc(p.bindingId)}">Отклонить</button>
           </div>`).join('')}
       </div>` : ''}
 
@@ -207,50 +267,128 @@ export async function renderAccess(state) {
     </div>`;
 }
 
-/* ─────────────── оплата ─────────────── */
+/* ─────────────── начисления ─────────────── */
 
-export function renderPayment(state) {
+/**
+ * Экран начислений.
+ *
+ * Ключевая честность: приложение НЕ знает, прошёл ли платёж. В платёжном
+ * QR такой информации нет, доступа к биллингу УК и к ГИС ЖКХ у нас тоже
+ * нет. Поэтому статус подписан «отмечено вами», а расчётная сумма нигде
+ * не названа задолженностью перед управляющей компанией.
+ */
+export async function renderPayment(state) {
   const property = state.currentProperty;
-  const bill = property?.bill;
+  if (!property) return emptyState('Адрес не привязан', 'Отсканируйте квитанцию');
+
+  let data;
+  try {
+    data = await api.bills(property.propertyId);
+  } catch (error) {
+    return errorState(error, 'payment');
+  }
+
+  const nothingOwed = data.outstandingKopecks === 0;
 
   return html`
     <div class="dt-card">
       <div class="pay-label">
-        ${bill?.period ? `Начисление за ${esc(periodName(bill.period))}` : 'Начислений нет'}
+        ${nothingOwed ? 'Непогашенных начислений нет' : 'Не отмечено оплаченным'}
       </div>
-      <div class="pay-amt">${bill?.sumKopecks != null ? esc(money(bill.sumKopecks)) : '—'}</div>
+      <div class="pay-amt" style="${data.overdueCount ? 'color:var(--negative)' : ''}">
+        ${esc(data.outstanding)}
+      </div>
       <div class="pay-card-bottom">
-        <span class="pay-due">${esc(property?.ukName ?? '')}</span>
+        <span class="pay-due">
+          ${data.overdueCount
+            ? `${data.overdueCount} ${plural(data.overdueCount, 'период', 'периода', 'периодов')} с истёкшим сроком`
+            : `по всем счетам квартиры: ${esc((property.accounts ?? []).length)}`}
+        </span>
       </div>
     </div>
 
-    <div class="field-label">Реквизиты из квитанции</div>
+    <div class="warn-line" style="margin-top:12px">${esc(data.disclaimer)}</div>
+
+    <div class="field-label">История начислений</div>
+    ${data.bills.length === 0
+      ? emptyState('Начислений нет', 'Отсканируйте квитанцию — она попадёт в историю')
+      : `<div class="list">${data.bills.map(billRow).join('')}</div>`}
+
+    <div class="field-label">Лицевые счета этой квартиры</div>
     <div class="list">
-      ${infoRow('Лицевой счёт', property?.persAcc)}
-      ${infoRow('Адрес', property?.addressRaw)}
-      ${infoRow('Период', bill?.period ? periodName(bill.period) : null)}
+      ${(property.accounts ?? []).length
+        ? property.accounts.map((a) => html`
+            <div class="row">
+              <div class="content">
+                <div class="t">${esc(SERVICE_LABEL[a.service] ?? 'Прочее')}</div>
+                <div class="d">${esc(a.provider ?? '')} · счёт ${esc(a.persAcc)}</div>
+              </div>
+            </div>`).join('')
+        : infoRow('Лицевые счета', 'нет')}
+    </div>
+
+    <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
+      За квартиру платят нескольким организациям: ЖКУ, свет, газ, вывоз мусора.
+      Отсканируйте каждую квитанцию — все они добавятся к одному адресу.
+    </div>
+
+    <button class="btn-primary secondary" data-action="add-property">
+      Добавить квитанцию
+    </button>
+
+    <div class="field-label">Об объекте</div>
+    <div class="list">
+      ${infoRow('Обслуживает дом', property.ukName
+        ?? 'дома нет в реестре управляющих организаций')}
+      ${property.ukPhone ? infoRow('Телефон УК', property.ukPhone) : ''}
+      ${infoRow('Адрес', property.addressRaw)}
+      ${property.addressSource === 'resident'
+        ? infoRow('Источник адреса', 'указан вами, ждёт сверки с УК')
+        : property.addressSource === 'uk'
+          ? infoRow('Источник адреса', 'подтверждён управляющей компанией')
+          : ''}
     </div>
 
     <div class="dt-card" style="margin-top:16px">
-      <div class="meter-name">Оплата пока не подключена</div>
+      <div class="meter-name">Оплатить можно по тому же QR</div>
       <div class="dt-p" style="color:var(--tx-2);font-size:14px;margin-top:8px">
-        Приём платежей требует договора с банком или платёжным агрегатором
-        и регистрации в ГИС ЖКХ. Это следующий шаг после пилота с УК — сейчас
-        приложение показывает начисление и хранит историю, а платить можно
-        по тому же QR в приложении банка.
+        Наведите камеру банковского приложения на код с квитанции — реквизиты
+        подставятся сами. Приём платежей внутри приложения требует договора
+        с банком и регистрации в ГИС ЖКХ, это следующий шаг после пилота с УК.
       </div>
     </div>`;
 }
 
-function infoRow(title, value) {
-  if (!value) return '';
+function billRow(b) {
+  const tone = b.status === 'paid' ? 'ok' : b.status === 'overdue' ? 'bad' : '';
+  const paid = b.status === 'paid';
+
   return html`
     <div class="row">
+      <span class="sq ${tone}">
+        ${paid
+          ? '<svg viewBox="0 0 20 20" fill="none"><path d="M4.5 10.5L8.2 14.2L15.5 6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+          : '<svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7.2" stroke="currentColor" stroke-width="1.6"/><path d="M10 6V10.4M10 13.6V13.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>'}
+      </span>
       <div class="content">
-        <div class="d">${esc(title)}</div>
-        <div class="t" style="margin-top:2px">${esc(value)}</div>
+        <div class="t">
+          ${esc(b.serviceLabel ?? '')} · ${esc(b.sum)}
+        </div>
+        <div class="d">
+          ${esc(capitaliseFirst(b.periodLabel))} · ${esc(b.statusLabel)}${paid && b.paidAt ? ` · ${esc(formatDate(b.paidAt))}` : ''}
+        </div>
+        <div class="d">${esc(b.provider ?? '')}</div>
       </div>
+      <button class="pay-quickbtn tappable"
+              style="${paid ? '' : 'background:var(--accent);color:#fff'}"
+              data-action="mark-paid" data-id="${esc(b.id)}" data-paid="${paid ? '0' : '1'}">
+        ${paid ? 'Снять' : 'Оплатил'}
+      </button>
     </div>`;
+}
+
+function capitaliseFirst(value) {
+  return String(value).charAt(0).toUpperCase() + String(value).slice(1);
 }
 
 /* ─────────────── аварийные службы ─────────────── */
@@ -345,6 +483,19 @@ export async function handleProfileAction(action, target, ctx) {
           await api.revokeAccess(target.dataset.id);
           platform.haptic('medium');
           toast('Доступ отозван');
+          await ctx.refresh();
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+      return true;
+    }
+
+    case 'mark-paid': {
+      await withLoading(target, async () => {
+        try {
+          await api.markPaid(target.dataset.id, target.dataset.paid === '1');
+          platform.haptic('light');
           await ctx.refresh();
         } catch (error) {
           toast(error.message);

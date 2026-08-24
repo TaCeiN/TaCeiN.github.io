@@ -27,7 +27,17 @@ const CATEGORY_TONE = {
 export async function renderFeed(state, { category } = {}) {
   let posts;
   try {
-    posts = (await api.feed(category)).posts;
+    const scope = category === 'market' ? 'market' : 'house';
+    posts = (await api.feed(scope)).posts
+      /**
+       * Вторая проверка поверх серверного scope.
+       *
+       * Доски обязаны быть раздельными: «Объявления дома» — это отключения
+       * и собрания, а не «продам велосипед». Дублирующий фильтр стоит
+       * ничего и держит экран честным, даже если до браузера доехал старый
+       * или чужой ответ — с кэшем такое уже случалось.
+       */
+      .filter((p) => (scope === 'market' ? p.category === 'market' : p.category !== 'market'));
   } catch (error) {
     return errorState(error, category === 'market' ? 'market' : 'feed');
   }
@@ -51,13 +61,16 @@ export async function renderFeed(state, { category } = {}) {
 }
 
 function postRow(p) {
-  const tone = CATEGORY_TONE[p.category] ?? '';
+  const tone = p.expired ? '' : CATEGORY_TONE[p.category] ?? '';
   return html`
-    <button class="row tappable" data-action="post" data-id="${esc(p.id)}">
+    <button class="row tappable ${p.expired ? 'faded' : ''}" data-action="post" data-id="${esc(p.id)}">
       <span class="sq ${tone}">${categoryIcon(p.category)}</span>
       <div class="content">
         <div class="t">${esc(p.title)}</div>
-        <div class="d">${esc(p.categoryLabel)} · ${esc(p.author)} · ${esc(formatDate(p.publishedAt))}</div>
+        <div class="d">
+          ${esc(p.categoryLabel)} · ${esc(p.author)} · ${esc(formatDate(p.publishedAt))}
+          ${p.expired ? ' · завершено' : ''}
+        </div>
       </div>
       <span class="chev"><svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
     </button>`;
@@ -101,6 +114,12 @@ export async function renderPost(state, { id }) {
       <div class="dt-p" style="color:var(--tx-2);font-size:13px">
         Объявление разместил сосед. Управляющая компания за него не отвечает
         и в сделке не участвует.
+      </div>` : ''}
+
+    ${p.type === 'chair' ? html`
+      <div class="dt-p" style="color:var(--tx-2);font-size:13px">
+        Опубликовал председатель совета дома — он выбран жильцами,
+        а учётку подтвердила управляющая компания.
       </div>` : ''}`;
 }
 
