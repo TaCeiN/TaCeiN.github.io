@@ -15,8 +15,54 @@ let cameraSession = null;
 
 export function renderLogin(state) {
   const { config, error, name, addingAddress } = state;
+
+  /**
+   * В бою вход по квитанции работает только внутри MAX.
+   *
+   * Говорим это СРАЗУ, а не после сканирования. Иначе человек, открывший
+   * сайт в браузере, наводит камеру на квитанцию, ждёт — и только тогда
+   * получает отказ. Обещание, которое не выполняется, хуже отсутствующей
+   * кнопки: выглядит как поломка приложения.
+   */
+  if (config && config.webLogin === false && !platform.inMax) {
+    return html`
+      <div class="page active" id="page-login">
+        <div class="onb-hero">
+          <div class="onb-logo">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none"><path d="M4 10.5L12 4L20 10.5V19.5C20 20 19.6 20.5 19 20.5H5C4.4 20.5 4 20 4 19.5V10.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="dt-title" style="margin-top:0">Заречье. Дом</div>
+          <div class="success-p" style="margin:10px auto 0">
+            Приложение открывается внутри мессенджера MAX. Там личность
+            подтверждает сама платформа — поэтому вход по квитанции
+            безопасен и не требует пароля.
+          </div>
+        </div>
+
+        <div class="dt-card">
+          <div class="meter-name">Как войти</div>
+          <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+            Найдите в MAX бота
+            ${config.botUsername ? html`<b>@${esc(config.botUsername)}</b>` : 'вашего дома'}
+            и откройте мини-приложение. Дальше — отсканировать QR-код
+            с квитанции ЖКУ, всё остальное приложение сделает само.
+          </div>
+          ${config.botUsername ? html`
+            <a class="btn-primary" style="display:block;text-align:center;text-decoration:none"
+               href="https://max.ru/${esc(config.botUsername)}?startapp"
+               target="_blank" rel="noopener">Открыть в MAX</a>` : ''}
+        </div>
+
+        <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
+          Кабинет управляющей компании — по адресу <b>/dispatcher/</b>,
+          он работает в браузере.
+        </div>
+      </div>`;
+  }
+
   const canScanNative = platform.inMax;
   const canScanCamera = cameraAvailable();
+
 
   return html`
     <div class="page active" id="page-login">
@@ -106,6 +152,8 @@ export function bindLogin(root, { onSuccess, rerender }) {
   let lastQr = null;
   /** Улица, выбранная в подсказке: код нужен серверу, а не текст поля */
   let chosenStreet = null;
+  /** Заявка, которую сейчас дозаполняет человек */
+  let pendingBinding = null;
 
   async function submit(qr, button, extra) {
     if (!qr) return;
@@ -115,20 +163,23 @@ export function bindLogin(root, { onSuccess, rerender }) {
       try {
         const result = await api.loginQr(qr, extra);
 
-        // Счёт занят: доступ выдаёт собственник, но сессия уже наша
-        if (result?.status === 'needs_owner_approval') {
+        /**
+         * Квитанция заводит ЗАЯВКУ, а не открывает квартиру.
+         *
+         * Ответ один и тот же — занят лицевой счёт или свободен. Раньше
+         * ответы различались, и по ним перебирались номера счетов
+         * и фамилии собственников.
+         */
+        if (result?.status === 'pending') {
           platform.haptic('medium');
-          showPending(result);
+          if (result.claimComplete) showPending(result);
+          else showClaimForm(result);
           return;
         }
 
         platform.haptic('medium');
         onSuccess(result);
       } catch (error) {
-        if (error instanceof ApiError && error.code === 'needs_name') {
-          showNameForm();
-          return;
-        }
         /**
          * В квитанции нет адреса — спрашиваем его один раз.
          *
@@ -144,18 +195,9 @@ export function bindLogin(root, { onSuccess, rerender }) {
           showRegionMissing(error.body);
           return;
         }
-        /**
-         * Назвался собственником, но не сошлось — форму не сбрасываем,
-         * иначе человеку придётся заново наводить камеру на квитанцию.
-         */
-        if (error instanceof ApiError && error.code === 'is_owner_elsewhere') {
-          const field = root.querySelector('#joinNameErr');
-          if (field) {
-            field.textContent = error.message;
-            field.classList.add('show');
-          } else {
-            showNameForm();
-          }
+        /** В бою вход по квитанции живёт только внутри MAX */
+        if (error instanceof ApiError && error.code === 'web_login_disabled') {
+          showWebLoginClosed(error.message);
           return;
         }
         showError(error);
@@ -172,36 +214,69 @@ export function bindLogin(root, { onSuccess, rerender }) {
    * владелец не мог добавить свежую квитанцию, то посторонний попадал
    * в чужой кабинет.
    */
-  function showNameForm() {
+  /**
+   * Шаг «расскажите о себе».
+   *
+   * ЗАЧЕМ ОН ЕСТЬ. Доступ открывает председатель совета дома — человек,
+   * который знает соседей в лицо. Но узнать он должен КОГО-ТО: в MAX
+   * у половины аккаунтов нет фамилии, а у части вместо имени ник.
+   * Поэтому ФИО и квартиру житель называет сам, а свободной строкой
+   * может объяснить, кто он.
+   *
+   * Прежней формы «кто вы: жилец или собственник» здесь больше нет.
+   * Она спрашивала человека о том, что проверить всё равно нельзя,
+   * а ответ «это мой счёт» превращал экран в оракул для перебора ФИО:
+   * угаданная фамилия сразу открывала чужой кабинет.
+   */
+  function showClaimForm(result) {
+    const box = root.querySelector('#loginError');
+    if (!box) return;
+
+    pendingBinding = result.bindingId;
+
+    box.innerHTML = html`
+      <div class="dt-card" style="margin-top:0">
+        <div class="meter-name">Заявка принята</div>
+        <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+          ${result.hasChairman
+            ? `Доступ подтверждает председатель совета дома. Расскажите о себе,
+               чтобы он понял, кто вы.`
+            : `Доступ подтверждает управляющая компания. Расскажите о себе,
+               чтобы вас можно было найти в её данных.`}
+        </div>
+
+        <div class="field-label">Фамилия и имя</div>
+        <input type="text" id="claimName" placeholder="Иванова Мария" autocomplete="name">
+
+        <div class="field-label">Номер квартиры</div>
+        <input type="text" id="claimFlat" placeholder="27" autocomplete="off">
+
+        <div class="field-label">Что передать председателю</div>
+        <textarea id="claimNote" placeholder="Например: живу с 2019 года, квартира на пятом этаже"></textarea>
+
+        <div class="field-error" id="claimErr"></div>
+
+        <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
+          Эти данные видит только тот, кто подтверждает доступ.
+        </div>
+
+        <button class="btn-primary" data-action="send-claim">Отправить заявку</button>
+      </div>`;
+    root.querySelector('#claimName')?.focus();
+  }
+
+  /** Вход по квитанции вне мессенджера в бою закрыт — объясняем честно. */
+  function showWebLoginClosed(message) {
     const box = root.querySelector('#loginError');
     if (!box) return;
 
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
-        <div class="meter-name">Этот лицевой счёт уже привязан</div>
+        <div class="meter-name">Вход работает внутри MAX</div>
         <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
-          Так бывает и когда счёт привязали вы сами с другого устройства,
-          и когда это сделал кто-то из вашей квартиры. Скажите, кто вы, —
-          доступ выдаёт тот, за кем счёт закреплён.
+          ${esc(message)}
         </div>
-
-        <div class="field-label">Кто вы</div>
-        <div class="chips" id="intentChips">
-          <span class="chip sel" data-action="pick-intent" data-v="member">Живу здесь</span>
-          <span class="chip" data-action="pick-intent" data-v="owner">Это мой счёт</span>
-        </div>
-
-        <div class="field-label">Как вас зовут</div>
-        <input type="text" id="joinName" placeholder="Фамилия и имя" autocomplete="name">
-        <div class="field-error" id="joinNameErr"></div>
-
-        <div class="dt-p" style="font-size:13px;color:var(--tx-2)" id="intentHint">
-          Собственник увидит запрос и подтвердит вам доступ жильца.
-        </div>
-
-        <button class="btn-primary" data-action="join">Продолжить</button>
       </div>`;
-    root.querySelector('#joinName')?.focus();
   }
 
   /**
@@ -325,10 +400,6 @@ export function bindLogin(root, { onSuccess, rerender }) {
     });
   }
 
-  function currentIntent() {
-    return root.querySelector('#intentChips .chip.sel')?.dataset.v ?? 'member';
-  }
-
   /** Экран ожидания. Проверка статуса — по кнопке, а не опросом сервера. */
   function showPending(result) {
     const box = root.querySelector('#loginError');
@@ -336,14 +407,13 @@ export function bindLogin(root, { onSuccess, rerender }) {
 
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
-        <div class="meter-name">Запрос отправлен</div>
+        <div class="meter-name">Заявка отправлена</div>
         <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
-          Собственник увидит его в приложении и подтвердит доступ.
+          ${result.hasChairman
+            ? `Председатель совета дома увидит её и подтвердит доступ.`
+            : `Управляющая компания увидит её и подтвердит доступ.`}
           Повторно сканировать квитанцию не нужно — приложение вас запомнило.
         </div>
-        ${result.inviteCode ? html`
-          <div class="field-label">Код запроса</div>
-          <div class="code-box">${esc(result.inviteCode)}</div>` : ''}
         <button class="btn-primary" data-action="check-approval">Я получил доступ</button>
       </div>`;
   }
@@ -434,34 +504,34 @@ export function bindLogin(root, { onSuccess, rerender }) {
       return;
     }
 
-    if (action === 'join') {
-      const field = root.querySelector('#joinName');
-      const error = root.querySelector('#joinNameErr');
-      const name = field?.value.trim() ?? '';
+    if (action === 'send-claim') {
+      const name = root.querySelector('#claimName')?.value.trim() ?? '';
+      const flat = root.querySelector('#claimFlat')?.value.trim() ?? '';
+      const note = root.querySelector('#claimNote')?.value.trim() ?? '';
+      const error = root.querySelector('#claimErr');
 
-      if (name.length < 3) {
-        field?.classList.add('error');
+      const complain = (text) => {
         if (error) {
-          error.textContent = 'Укажите фамилию и имя — собственник должен понять, кто просит';
+          error.textContent = text;
           error.classList.add('show');
         }
-        field?.focus();
-        return;
-      }
-      await submit(lastQr, target, { name, intent: currentIntent() });
-    }
-    if (action === 'pick-intent') {
-      target.parentElement.querySelectorAll('.chip').forEach((c) => c.classList.remove('sel'));
-      target.classList.add('sel');
+      };
 
-      const hint = root.querySelector('#intentHint');
-      if (hint) {
-        hint.textContent = target.dataset.v === 'owner'
-          ? 'Введите ФИО так, как оно напечатано в квитанции. Если счёт '
-            + 'привязан к аккаунту MAX, входить нужно через MAX.'
-          : 'Собственник увидит запрос и подтвердит вам доступ жильца.';
-      }
+      if (name.length < 3) return complain('Укажите фамилию и имя');
+      if (!flat) return complain('Укажите номер квартиры');
+      error?.classList.remove('show');
+
+      await withLoading(target, async () => {
+        try {
+          await api.sendClaim(pendingBinding, { name, flat, note });
+          showPending({ hasChairman: true });
+        } catch (e) {
+          complain(e.message);
+        }
+      });
+      return;
     }
+
     if (action === 'check-approval') {
       /**
        * Собственник мог подтвердить доступ в любой момент. Сессия у нас

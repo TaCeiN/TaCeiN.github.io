@@ -34,29 +34,89 @@ export function homeSkeleton() {
   return `<div class="page active" id="page-home">${loadingState('Собираем данные по вашему адресу…')}</div>`;
 }
 
+/**
+ * Вход в раздел «Совет дома».
+ *
+ * Появляется, только когда есть что разобрать: карточка с числом заявок,
+ * а не постоянный пункт меню. Это и есть замена второму профилю —
+ * не режим, а обычный переход, из которого возвращаются кнопкой «Назад».
+ */
+function councilCard(state) {
+  const council = state.chairman;
+  if (!council?.isChairman) return '';
+
+  const waiting = council.houses.reduce((n, h) => n + h.pendingClaims, 0);
+  if (waiting === 0) return '';
+
+  return html`
+    <button class="alert" data-action="council">
+      <span class="ic">
+        <svg width="20" height="20" viewBox="0 0 22 22" fill="none"><path d="M4 9L11 3.5L18 9V18H4V9Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 18V12H14V18" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      </span>
+      <div>
+        <div class="t">Совет дома</div>
+        <div class="d">
+          ${waiting} ${plural(waiting, 'заявка ждёт', 'заявки ждут', 'заявок ждут')} вашего решения
+        </div>
+      </div>
+      <span class="chev"><svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+    </button>`;
+}
+
 export async function renderHome(state) {
   const { me } = state;
   const property = state.currentProperty;
 
   /**
-   * Человек ждёт, пока собственник подтвердит доступ.
+   * Доступ к дому ещё не подтверждён.
    *
-   * Объектов у него ещё нет, и раньше он попадал на «Адрес не привязан»
-   * с кнопкой, которая ВЫХОДИТ ИЗ АККАУНТА. А на экране запроса ему
-   * пообещали обратное: «повторно сканировать квитанцию не нужно,
-   * приложение вас запомнило». Выход стирал сессию и это обещание.
+   * ГЛАВНОЕ ЗДЕСЬ — что жалоба всё равно работает. Ради неё продукт
+   * и ставят: у жителя должно остаться доказательство, что он пожаловался,
+   * и оно должно лечь в архив УК, откуда его нельзя удалить. Ждать
+   * председателя ради этого незачем — тем более что у дома его может
+   * не быть вовсе.
+   *
+   * Раньше человек здесь попадал на «Адрес не привязан» с кнопкой,
+   * которая ВЫХОДИТ ИЗ АККАУНТА, — а на экране заявки ему обещали
+   * обратное: «сканировать заново не нужно, мы вас запомнили».
    */
   if (!property && me.myPendingAccess?.length) {
     const waiting = me.myPendingAccess[0];
+    const who = waiting.deciders?.chairman
+      ? 'председатель совета дома'
+      : waiting.deciders?.dispatcher
+        ? 'управляющая компания'
+        : null;
+
     return html`
       <div class="dt-card" style="margin-top:0">
-        <div class="meter-name">Ждём подтверждения собственника</div>
-        <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
-          Вы запросили доступ к ${esc(waiting.addressRaw ?? 'адресу')}.
-          Собственник увидит запрос в своём приложении. Сканировать квитанцию
-          заново не нужно — мы вас запомнили.
+        <div class="meter-name">
+          ${waiting.status === 'revoked' ? 'Заявка отклонена' : 'Заявка на рассмотрении'}
         </div>
-        <button class="btn-primary" data-action="check-access">Проверить</button>
+        <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+          ${waiting.status === 'revoked'
+            ? esc(waiting.rejectReason ?? 'Причина не указана')
+            : !waiting.claimComplete
+              ? 'Расскажите о себе — без этого подтвердить заявку нельзя.'
+              : who
+                ? `Доступ к дому подтверждает ${who}. Сканировать квитанцию
+                   заново не нужно — мы вас запомнили.`
+                : `У дома пока нет ни председателя, ни подключённой управляющей
+                   компании. Подтвердить доступ к соседям некому.`}
+        </div>
+        ${waiting.addressRaw
+          ? html`<div class="dt-p" style="font-size:13px">${esc(waiting.addressRaw)}</div>`
+          : ''}
+        <button class="btn-primary secondary" data-action="check-access">Проверить</button>
+      </div>
+
+      <div class="dt-card">
+        <div class="meter-name">Пожаловаться можно уже сейчас</div>
+        <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+          Обращение уйдёт в управляющую компанию и останется в её архиве.
+          Удалить его она не может — только изменить статус.
+        </div>
+        <button class="btn-primary" data-action="complaint">Написать обращение</button>
       </div>`;
   }
 
@@ -105,6 +165,8 @@ export async function renderHome(state) {
     </div>
 
     ${me.pendingRequests?.length ? renderAccessRequests(me.pendingRequests) : ''}
+
+    ${councilCard(state)}
 
     ${outage ? html`
       <button class="alert" data-action="post" data-id="${esc(outage.id)}">

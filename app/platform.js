@@ -44,16 +44,34 @@ export const platform = {
     return [u.last_name, u.first_name].filter(Boolean).join(' ') || u.first_name;
   },
 
-  /** Нативная кнопка «Назад» в шапке MAX вместо нашей истории браузера. */
+  /**
+   * Нативная кнопка «Назад» в шапке MAX вместо нашей истории браузера.
+   *
+   * ОДИН обработчик на всё приложение. Раньше `show()` подписывал новый
+   * при каждом переходе, а отписки не было вовсе: после пяти переходов
+   * вглубь одно нажатие «Назад» вызывало возврат пять раз и выбрасывало
+   * человека в корень. Теперь подписка ставится ровно один раз, а меняется
+   * только то, куда она ведёт.
+   */
   backButton: {
+    _bound: false,
+    _handler: null,
+
     show(handler) {
       const b = bridge()?.BackButton;
       if (!b) return false;
-      b.onClick(handler);
+
+      this._handler = handler;
+      if (!this._bound) {
+        b.onClick(() => this._handler?.());
+        this._bound = true;
+      }
       b.show();
       return true;
     },
+
     hide() {
+      this._handler = null;
       bridge()?.BackButton?.hide();
     },
   },

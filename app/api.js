@@ -150,6 +150,15 @@ export const api = {
 
   loginMax: () => request('POST', '/api/auth/max', {}),
   loginQr: (qr, extra) => request('POST', '/api/auth/qr', { qr, ...(extra ?? {}) }),
+  /**
+   * Рассказать о себе по заявке.
+   *
+   * Отдельный шаг после квитанции: доступ открывает председатель дома,
+   * и ему нужно понять, кто просит. Имени из MAX для этого не хватает —
+   * у половины аккаунтов там нет фамилии.
+   */
+  sendClaim: (bindingId, payload) =>
+    request('POST', `/api/properties/claims/${bindingId}`, payload),
   /** Подсказка улиц загруженного региона: адрес выбирается, а не пишется */
   streets: (region, q) =>
     request('GET', `/api/address/streets?region=${encodeURIComponent(region)}&q=${encodeURIComponent(q)}`),
@@ -179,6 +188,27 @@ export const api = {
   vote: (id, optionId) => request('POST', `/api/polls/${id}/vote`, { optionId }),
 
   meters: (propertyId) => request('GET', `/api/properties/${propertyId}/meters`),
+  /**
+   * Завести счётчик.
+   *
+   * До этого маршрута приборы учёта в системе не появлялись никак:
+   * вставка в таблицу жила только в тестах, и раздел «Показания»
+   * был пуст у каждого жителя.
+   */
+  addMeter: (propertyId, payload) =>
+    request('POST', `/api/properties/${propertyId}/meters`, payload),
+  notifications: () => request('GET', '/api/notifications'),
+
+  /**
+   * Совет дома. Отдельного входа нет: это та же сессия жителя,
+   * а права выводятся из роли председателя.
+   */
+  chairmanMe: () => request('GET', '/api/chairman/me'),
+  chairmanHouse: () => request('GET', '/api/chairman/house'),
+  chairmanClaims: () => request('GET', '/api/chairman/claims'),
+  decideClaim: (id, role) => request('POST', `/api/chairman/claims/${id}/approve`, { role }),
+  rejectClaim: (id, reason) => request('POST', `/api/chairman/claims/${id}/reject`, { reason }),
+  readNotifications: (id) => request('POST', '/api/notifications/read', id ? { id } : {}),
   submitReading: (meterId, value, confirmed) =>
     request('POST', `/api/meters/${meterId}/readings`, { value, confirmed }),
   analytics: (propertyId) => request('GET', `/api/properties/${propertyId}/analytics`),

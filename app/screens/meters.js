@@ -27,14 +27,20 @@ export async function renderMeters(state) {
     return errorState(error, 'meters');
   }
 
-  if (data.meters.length === 0) {
-    return emptyState(
-      'Счётчиков нет',
-      'По этому лицевому счёту приборы учёта не заведены. Начисление идёт по нормативу.',
-    );
-  }
-
   const win = data.window;
+
+  if (data.meters.length === 0) {
+    return html`
+      <div class="state">
+        <div class="state-title">Счётчиков пока нет</div>
+        <div class="state-text">
+          Заведите приборы учёта, которые стоят у вас в квартире, — после этого
+          можно передавать показания. Без них начисляют по нормативу,
+          а это почти всегда дороже фактического расхода.
+        </div>
+      </div>
+      ${addMeterForm(data.kinds)}`;
+  }
 
   return html`
     <div class="win-note ${win.open ? 'open' : ''}">
@@ -50,11 +56,51 @@ export async function renderMeters(state) {
 
     ${data.meters.map((m) => meterCard(m, data.period)).join('')}
 
+    ${addMeterForm(data.kinds, data.meters)}
+
     <div class="dt-p" style="color:var(--tx-2);font-size:13px">
       Показания принимаются с ${win.from} по ${win.to} число.
       Без них начисляют по нормативу — это почти всегда дороже фактического расхода.
     </div>
   `;
+}
+
+/**
+ * Форма «завести счётчик».
+ *
+ * Заводит его сам житель: вид, заводской номер и дата поверки написаны
+ * на самом приборе. У управляющей компании этих данных может не быть
+ * вовсе — квартирные счётчики часто ставит собственник.
+ */
+function addMeterForm(kinds = [], existing = []) {
+  const taken = new Set(existing.map((m) => m.kind));
+  const free = kinds.filter((k) => !taken.has(k.kind));
+  if (free.length === 0) return '';
+
+  return html`
+    <div class="dt-card">
+      <div class="meter-name">Добавить счётчик</div>
+
+      <div class="field-label">Что считает</div>
+      <div class="chips" id="meterKinds">
+        ${free.map((k, i) => html`
+          <span class="chip ${i === 0 ? 'sel' : ''}" data-action="pick-meter-kind"
+                data-v="${esc(k.kind)}">${esc(k.label)}</span>`).join('')}
+      </div>
+
+      <div class="field-label">Заводской номер</div>
+      <input type="text" id="meterSerial" placeholder="Написан на корпусе прибора" autocomplete="off">
+
+      <div class="field-label">Поверка до</div>
+      <input type="date" id="meterDue">
+      <div class="dt-p" style="font-size:13px;color:var(--tx-2);margin-top:6px">
+        Дата из паспорта прибора. Если её нет под рукой — оставьте пустой,
+        добавите позже. Просроченная поверка переводит начисление на норматив.
+      </div>
+
+      <div class="field-error" id="meterAddErr"></div>
+      <button class="btn-primary" data-action="add-meter">Добавить</button>
+    </div>`;
 }
 
 function meterCard(m, period) {
@@ -209,6 +255,43 @@ function deltaLine(change, subject) {
 /* ─────────────── действия ─────────────── */
 
 export async function handleMeterAction(action, target, ctx) {
+  if (action === 'pick-meter-kind') {
+    target.parentElement.querySelectorAll('.chip').forEach((c) => c.classList.remove('sel'));
+    target.classList.add('sel');
+    return true;
+  }
+
+  if (action === 'add-meter') {
+    const kind = document.querySelector('#meterKinds .chip.sel')?.dataset.v;
+    const serial = document.querySelector('#meterSerial')?.value.trim() ?? '';
+    const due = document.querySelector('#meterDue')?.value ?? '';
+    const error = document.querySelector('#meterAddErr');
+
+    if (!kind) {
+      if (error) {
+        error.textContent = 'Выберите, что считает прибор';
+        error.classList.add('show');
+      }
+      return true;
+    }
+
+    await withLoading(target, async () => {
+      try {
+        await api.addMeter(ctx.state.currentProperty.propertyId, {
+          kind, serial, verificationDue: due || undefined,
+        });
+        toast('Счётчик добавлен');
+        await ctx.refresh();
+      } catch (e) {
+        if (error) {
+          error.textContent = e.message;
+          error.classList.add('show');
+        }
+      }
+    });
+    return true;
+  }
+
   if (action !== 'send-reading' && action !== 'confirm-reading') return false;
 
   const id = target.dataset.id;

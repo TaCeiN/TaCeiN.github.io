@@ -62,6 +62,10 @@ export function renderProfile(state) {
 
     <div class="field-label">Доступ и данные</div>
     <div class="list">
+      ${state.chairman?.isChairman
+        ? row('council', 'Совет дома',
+            esc(state.chairman.houses[0]?.houseLabel ?? 'Подтверждение жильцов, объявления, опросы'))
+        : ''}
       ${row('access', 'Кто видит мой адрес', 'Домочадцы и запросы доступа')}
       ${row('notifications', 'Уведомления', notificationsHint())}
       ${row('privacy', 'Персональные данные', 'Что мы храним и как это удалить')}
@@ -178,16 +182,33 @@ export function renderProperties(state) {
     </div>
 
     ${me.myPendingAccess?.length ? html`
-      <div class="field-label">Ждут подтверждения собственника</div>
+      <div class="field-label">Ваши заявки на доступ</div>
       <div class="list">
         ${me.myPendingAccess.map((p) => html`
           <div class="row">
             <div class="content">
-              <div class="t">${esc(p.addressRaw ?? '')}</div>
-              <div class="d">Собственник ещё не подтвердил доступ</div>
+              <div class="t">${p.status === 'revoked' ? 'Заявка отклонена' : 'Заявка на рассмотрении'}</div>
+              <div class="d">
+                ${p.status === 'revoked'
+                  ? esc(p.rejectReason ?? 'Причина не указана')
+                  : !p.claimComplete
+                    ? 'Расскажите о себе — без этого заявку не подтвердят'
+                    : p.deciders?.chairman
+                      ? 'Подтверждает председатель совета дома'
+                      : p.deciders?.dispatcher
+                        ? 'Подтверждает управляющая компания'
+                        : 'Дома пока нет в реестре — подтвердить некому'}
+              </div>
             </div>
-            <span class="pill">ожидает</span>
+            <span class="pill ${p.status === 'revoked' ? '' : 'new'}">
+              ${p.status === 'revoked' ? 'отказ' : 'ожидает'}
+            </span>
           </div>`).join('')}
+      </div>
+
+      <div class="dt-p" style="color:var(--tx-2);font-size:13px">
+        Адрес квартиры не показывается, пока доступ не подтверждён:
+        предъявленная квитанция ещё не доказывает, что вы там живёте.
       </div>` : ''}
 
     <button class="btn-primary" data-action="add-property">Добавить квитанцию</button>
@@ -227,8 +248,12 @@ export async function renderAccess(state) {
           <div class="row">
             <span class="sq new"><svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="7.5" r="3.2" stroke="currentColor" stroke-width="1.5"/><path d="M4.5 17C4.5 13.8 7 12.4 10 12.4C13 12.4 15.5 13.8 15.5 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>
             <div class="content">
-              <div class="t">${esc(p.requesterName)}</div>
-              <div class="d">Отсканировал квитанцию этого адреса</div>
+              <div class="t">${esc(p.claimedName || p.requesterName)}</div>
+              <div class="d">
+                ${p.claimedNote
+                  ? esc(p.claimedNote)
+                  : 'Отсканировал квитанцию этого адреса'}
+              </div>
             </div>
             <button class="pay-quickbtn tappable" style="background:var(--accent);color:#fff"
                     data-action="approve" data-id="${esc(p.bindingId)}">Разрешить</button>

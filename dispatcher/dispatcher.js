@@ -1,4 +1,6 @@
-import { esc, html, formatDate, toast, withLoading, loadingState, errorState } from '../app/ui.js';
+import {
+  esc, html, formatDate, toast, withLoading, loadingState, errorState, emptyState,
+} from '../app/ui.js';
 import { slotText } from '../app/screens/requests.js';
 import {
   postForm, readPostForm, postList, pollForm, readPollForm, pollList,
@@ -120,7 +122,11 @@ const api = {
   chairmen: () => request('GET', '/api/dispatcher/chairmen'),
   addChairman: (payload) => request('POST', '/api/dispatcher/chairmen', payload),
   revokeChairman: (id) => request('POST', `/api/dispatcher/chairmen/${id}/revoke`, {}),
-  resetChairmanPassword: (id) => request('POST', `/api/dispatcher/chairmen/${id}/password`, {}),
+  chairmanCandidates: (houseKey) =>
+    request('GET', `/api/dispatcher/chairman-candidates?houseKey=${encodeURIComponent(houseKey)}`),
+  claims: () => request('GET', '/api/dispatcher/claims'),
+  approveClaim: (id, role) => request('POST', `/api/dispatcher/claims/${id}/approve`, { role }),
+  rejectClaim: (id, reason) => request('POST', `/api/dispatcher/claims/${id}/reject`, { reason }),
 };
 
 /* ─────────────── состояние ─────────────── */
@@ -136,6 +142,7 @@ const state = {
   posts: [],
   polls: [],
   chairmen: [],
+  claims: [],
   accounts: null,
   houses: null,
   /**
@@ -173,6 +180,7 @@ function renderLogin(error) {
 
 const TABS = [
   { id: 'requests', label: 'Заявки' },
+  { id: 'claims', label: 'Доступ жильцов' },
   { id: 'posts', label: 'Объявления дома' },
   { id: 'polls', label: 'Опросы' },
   { id: 'chairmen', label: 'Председатели' },
@@ -386,31 +394,37 @@ function renderChairmen() {
   return renderTabs() + html`
     ${fresh ? html`
       <div class="dsp-banner">
-        Пароль для «${esc(fresh.name)}»: <b class="ha-secret">${esc(fresh.password)}</b> ·
-        логин <b class="ha-secret">${esc(fresh.login)}</b>.
-        Передайте лично: второй раз пароль не показать, в базе только хеш.
+        Председателем дома назначен «${esc(fresh.name)}».
+        Раздел «Совет дома» появился у него в приложении — передавать
+        ничего не нужно, отдельного входа и пароля больше нет.
       </div>` : ''}
 
     <div class="dsp-card">
       <h2>Назначить председателя</h2>
       <div class="dsp-hint" style="margin-top:0">
-        Председатель ведёт объявления и опросы своего дома. К заявкам
+        Председателем становится ЖИТЕЛЬ дома: он подтверждает соседей,
+        ведёт объявления и опросы, видит сводку по квартирам. К заявкам
         доступа не получает — их разбирает УК.
       </div>
 
       <div class="field-label">Дом</div>
-      <select id="chHouse" class="dsp-select">
+      <select id="chHouse" class="dsp-select" data-action="ch-house">
         ${state.houses.map((h) => `<option value="${esc(h.houseKey)}">${esc(h.label)}</option>`).join('')}
       </select>
 
-      <div class="field-label">ФИО</div>
-      <input type="text" id="chName" placeholder="Например: Смирнова Анна Игоревна">
-
-      <div class="field-label">Квартира</div>
-      <input type="text" id="chFlat" placeholder="15">
-
-      <div class="field-label">Логин для входа</div>
-      <input type="text" id="chLogin" placeholder="chair-lenina-85">
+      <div class="field-label">Кто из жителей</div>
+      ${(state.chairmanCandidates ?? []).length === 0
+        ? html`<div class="dsp-hint">
+            По этому дому ещё никто не предъявил квитанцию. Председателя
+            можно назначить, только когда в приложении появится хотя бы
+            один житель этого дома.
+          </div>`
+        : html`<select id="chUser" class="dsp-select">
+            ${state.chairmanCandidates.map((c) => `<option value="${esc(c.userId)}">${
+              esc(`${c.claimedName || c.name}${c.flat ? `, кв. ${c.flat}` : ''}${
+                c.status === 'active' ? '' : ' — доступ ещё не подтверждён'}`)
+            }</option>`).join('')}
+          </select>`}
 
       <div class="dsp-actions" style="margin-top:16px">
         <button class="dsp-act primary" data-action="ch-add">Назначить</button>
@@ -428,7 +442,9 @@ function renderChairmen() {
                 <div>
                   <div class="ha-t">${esc(c.name)}${c.flat ? `, кв. ${esc(c.flat)}` : ''}</div>
                   <div class="ha-d">
-                    логин ${esc(c.login)} · назначен ${esc(formatDate(c.createdAt))}
+                    ${c.viaMax ? 'входит через MAX' : 'входит из браузера'}
+                    ${c.phone ? ` · ${esc(c.phone)}` : ''}
+                    · назначен ${esc(formatDate(c.createdAt))}
                     ${c.revokedAt ? ` · снят ${esc(formatDate(c.revokedAt))}` : ''}
                   </div>
                 </div>
@@ -437,9 +453,6 @@ function renderChairmen() {
                 </div>
                 ${c.active ? html`
                   <span style="display:flex;gap:8px">
-                    <button class="dsp-act" data-action="ch-password" data-id="${esc(c.id)}">
-                      Новый пароль
-                    </button>
                     <button class="dsp-act danger" data-action="ch-revoke" data-id="${esc(c.id)}">
                       Снять
                     </button>
@@ -681,9 +694,77 @@ async function loadHouses() {
   state.houses = [...byKey].map(([houseKey, label]) => ({ houseKey, label: label || houseKey }));
 }
 
+/**
+ * Заявки жильцов на доступ к своим квартирам.
+ *
+ * ЗАПАСНОЙ ПУТЬ К ПРЕДСЕДАТЕЛЮ. Он есть далеко не у каждого дома,
+ * а без подтверждающего житель застревает в вечном ожидании. У УК
+ * есть биллинг — связка «лицевой счёт → ФИО → квартира», — и сверить
+ * заявку она может точнее всех.
+ */
+function renderClaims() {
+  const rows = state.claims ?? [];
+
+  return renderTabs() + html`
+    <div class="dsp-card">
+      <h2>Кто просит доступ к квартирам ваших домов</h2>
+      <div class="dt-p" style="margin-top:0;font-size:14px;color:var(--tx-2)">
+        Сверьте фамилию и квартиру со своим биллингом. Квитанция сама
+        по себе ничего не доказывает: её строку можно набрать руками.
+        Если у дома есть председатель, заявку разберёт он.
+      </div>
+
+      ${rows.length === 0
+        ? emptyState('Заявок нет', 'Здесь появятся жильцы, отсканировавшие квитанцию')
+        : `<div class="ha-list">${rows.map(claimRow).join('')}</div>`}
+    </div>`;
+}
+
+function claimRow(c) {
+  const mismatch = c.claimedFlat && c.flat && c.claimedFlat !== c.flat;
+
+  return html`
+    <div class="ha-row ${c.complete ? '' : 'off'}">
+      <div class="ha-main">
+        <div class="ha-title">${esc(c.claimedName || c.accountName)}</div>
+        <div class="ha-sub">${esc(c.address)}</div>
+        <div class="ha-sub">
+          Называет квартиру ${esc(c.claimedFlat || '—')}
+          ${mismatch ? ` · в квитанции ${esc(c.flat)} — расхождение` : ''}
+          ${c.claimedPhone ? ` · ${esc(c.claimedPhone)}` : ''}
+        </div>
+        ${c.note ? html`<div class="ha-sub">${esc(c.note)}</div>` : ''}
+        <div class="ha-state">
+          ${c.viaMax ? 'Вход через MAX' : 'Вход из браузера'}
+          ${c.phoneVerified ? ' · телефон подтверждён' : ''}
+          · ${esc(formatDate(c.requestedAt))}
+        </div>
+      </div>
+
+      ${c.complete ? html`
+        <div class="dsp-actions">
+          <button class="dsp-act primary" data-action="claim-owner" data-id="${esc(c.bindingId)}">
+            Собственник
+          </button>
+          <button class="dsp-act" data-action="claim-member" data-id="${esc(c.bindingId)}">
+            Жилец
+          </button>
+          <button class="dsp-act danger" data-action="claim-reject" data-id="${esc(c.bindingId)}">
+            Отказать
+          </button>
+        </div>`
+        : '<span class="pill">ждём данных о себе</span>'}
+    </div>`;
+}
+
 async function loadSection() {
   main().innerHTML = loadingState('Загружаем…');
   try {
+    if (state.tab === 'claims') {
+      state.claims = (await api.claims()).claims;
+      main().innerHTML = renderClaims();
+      return;
+    }
     if (state.tab === 'posts') {
       await loadHouses();
       state.posts = (await api.posts()).posts;
@@ -708,6 +789,10 @@ async function loadSection() {
     if (state.tab === 'chairmen') {
       await loadHouses();
       state.chairmen = (await api.chairmen()).chairmen;
+      const first = state.houses[0]?.houseKey;
+      state.chairmanCandidates = first
+        ? (await api.chairmanCandidates(first).catch(() => ({ candidates: [] }))).candidates
+        : [];
       main().innerHTML = renderChairmen();
       return;
     }
@@ -795,6 +880,36 @@ async function handleAction(action, target) {
     case 'reload':
       if (state.openId) return openRequest(state.openId);
       return loadSection();
+
+    case 'claim-owner':
+    case 'claim-member': {
+      const role = action === 'claim-owner' ? 'owner' : 'member';
+      await withLoading(target, async () => {
+        try {
+          await api.approveClaim(target.dataset.id, role);
+          toast(role === 'owner' ? 'Подтверждён собственником' : 'Подтверждён жильцом');
+          await loadSection();
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+      return;
+    }
+
+    case 'claim-reject': {
+      const reason = window.prompt('Почему отказ? Житель прочитает это в приложении');
+      if (!reason || reason.trim().length < 3) return;
+      await withLoading(target, async () => {
+        try {
+          await api.rejectClaim(target.dataset.id, reason.trim());
+          toast('Заявка отклонена');
+          await loadSection();
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+      return;
+    }
 
     case 'tab':
       state.tab = target.dataset.v;
@@ -896,40 +1011,31 @@ async function handleAction(action, target) {
       return;
     }
 
-    case 'ch-add': {
-      const name = document.querySelector('#chName')?.value.trim() ?? '';
-      const login = document.querySelector('#chLogin')?.value.trim() ?? '';
-      const houseKey = document.querySelector('#chHouse')?.value;
-      const flat = document.querySelector('#chFlat')?.value.trim() ?? '';
+    /** Смена дома в форме — подгружаем его жителей */
+    case 'ch-house': {
+      state.chairmanCandidates =
+        (await api.chairmanCandidates(target.value).catch(() => ({ candidates: [] }))).candidates;
+      main().innerHTML = renderChairmen();
+      return;
+    }
 
-      if (name.length < 3 || login.length < 3) {
-        toast('Нужны ФИО и логин не короче трёх символов');
+    case 'ch-add': {
+      const houseKey = document.querySelector('#chHouse')?.value;
+      const userId = document.querySelector('#chUser')?.value;
+
+      if (!userId) {
+        toast('Выберите жителя дома');
         return;
       }
 
       await withLoading(target, async () => {
         try {
-          const result = await api.addChairman({ houseKey, name, login, flat });
-          // Пароль показываем один раз: в базе только хеш
-          state.freshPassword = { name, login: result.login, password: result.password };
-          await loadSection();
-        } catch (error) {
-          toast(error.message);
-        }
-      });
-      return;
-    }
-
-    case 'ch-password': {
-      const row = state.chairmen.find((c) => c.id === target.dataset.id);
-      await withLoading(target, async () => {
-        try {
-          const result = await api.resetChairmanPassword(target.dataset.id);
-          state.freshPassword = {
-            name: row?.name ?? 'председатель',
-            login: row?.login ?? '',
-            password: result.password,
-          };
+          const result = await api.addChairman({ houseKey, userId });
+          /**
+           * Пароля больше нет и передавать нечего: раздел «Совет дома»
+           * появляется у человека в его же приложении.
+           */
+          state.freshPassword = { name: result.name };
           await loadSection();
         } catch (error) {
           toast(error.message);
@@ -943,7 +1049,8 @@ async function handleAction(action, target) {
         try {
           await api.revokeChairman(target.dataset.id);
           state.freshPassword = null;
-          toast('Председатель снят, вход закрыт');
+          // Гасить нечего: права проверяются на каждом запросе
+          toast('Председатель снят, права закрыты');
           await loadSection();
         } catch (error) {
           toast(error.message);
@@ -1006,6 +1113,19 @@ async function handleAction(action, target) {
 document.addEventListener('click', (event) => {
   const target = event.target.closest('[data-action]');
   if (!target) return;
+  handleAction(target.dataset.action, target);
+});
+
+/**
+ * Смена значения в списке — тоже действие.
+ *
+ * Клик по `<select>` не даёт нового значения: оно появляется только
+ * в событии change. Без этого выбор дома в форме председателя не подгружал
+ * бы его жителей.
+ */
+document.addEventListener('change', (event) => {
+  const target = event.target.closest('[data-action]');
+  if (!target || target.tagName !== 'SELECT') return;
   handleAction(target.dataset.action, target);
 });
 

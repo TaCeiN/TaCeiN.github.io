@@ -1,6 +1,8 @@
 import { api, ApiError } from './api.js';
 import { platform } from './platform.js';
-import { $, setHtml, toast, loadingState, errorState, esc } from './ui.js';
+import {
+  $, setHtml, toast, loadingState, errorState, emptyState, formatDate, esc, html,
+} from './ui.js';
 import { initRouter, reset, go, back, refresh, current } from './router.js';
 import { renderLogin, bindLogin, tryMaxLogin } from './screens/login.js';
 import { renderHome, homeSkeleton, shortAddress } from './screens/home.js';
@@ -16,6 +18,9 @@ import {
   renderProfile, renderProperties, renderAccess, renderPayment, renderEmergency,
   renderPrivacy, handleProfileAction,
 } from './screens/profile.js';
+import {
+  renderCouncil, renderCouncilHouse, handleCouncilAction,
+} from './screens/council.js';
 import { readTheme, applyTheme } from './theme.js';
 
 /**
@@ -55,6 +60,8 @@ const TITLES = {
   emergency: ['Аварийные службы', false],
   privacy: ['Персональные данные', false],
   profile: ['Профиль', false],
+  council: ['Совет дома', false],
+  'council-house': ['Квартиры дома', false],
 };
 
 /* ─────────────── высота под клавиатуру ─────────────── */
@@ -118,6 +125,12 @@ async function renderScreen(name, params = {}) {
       case 'requests':
         setHtml(host, await renderRequests());
         break;
+      case 'council':
+        setHtml(host, await renderCouncil(state));
+        break;
+      case 'council-house':
+        setHtml(host, await renderCouncilHouse(state));
+        break;
       case 'request':
         setHtml(host, await renderRequestDetail(params.id));
         break;
@@ -180,7 +193,7 @@ async function renderScreen(name, params = {}) {
         break;
 
       case 'notifications':
-        setHtml(host, notificationsScreen());
+        setHtml(host, await notificationsScreen());
         break;
 
       default:
@@ -228,12 +241,14 @@ const NAVIGATE = {
   feed: 'feed', profile: 'profile', meters: 'meters', analytics: 'analytics',
   polls: 'polls', market: 'market', payment: 'payment', access: 'access',
   emergency: 'emergency', properties: 'properties', notifications: 'notifications',
+  council: 'council',
 };
 
 async function handleAction(action, target) {
-  const ctx = { state, show: (n, p) => go(n, p), reset, refresh };
+  const ctx = { state, show: (n, p) => go(n, p), go, reset, refresh };
 
   if (await handleRequestAction(action, target, ctx)) return;
+  if (await handleCouncilAction(action, target, ctx)) return;
   if (await handleMeterAction(action, target, ctx)) return;
   if (await handleHouseAction(action, target, ctx)) return;
   if (await handleProfileAction(action, target, ctx)) return;
@@ -346,6 +361,14 @@ export async function boot({ silent = false } = {}) {
   state.currentProperty = state.me.properties[0] ?? null;
 
   /**
+   * Председательство грузим вместе с профилем.
+   *
+   * Ошибку глотаем: раздел «Совет дома» — дополнение, и если запрос
+   * не прошёл, приложение жителя обязано открыться как обычно.
+   */
+  state.chairman = await api.chairmanMe().catch(() => ({ isChairman: false, houses: [] }));
+
+  /**
    * Имя управляющей организации приходит из реестра и может отсутствовать:
    * дома нет в реестре ГИС ЖКХ либо УК ещё не подтвердила адрес. Тогда
    * подпись прячется целиком — подставлять сюда «УК» или демонстрационное
@@ -372,24 +395,62 @@ export async function boot({ silent = false } = {}) {
 /**
  * Уведомления.
  *
- * Пуш-уведомлений у веб-версии нет и быть не может: приложение открывается
- * в вебвью мессенджера, где Web Push недоступен. Единственный работающий
- * канал — сообщение от бота в MAX, и об этом честно сказано здесь, а не
- * молчаливым пустым списком.
+ * ЧТО ЗДЕСЬ ИЗМЕНИЛОСЬ. Раньше экран был заглушкой: «в браузере
+ * уведомлений не будет». При этом уведомления писались в базу с самого
+ * начала — просто прочитать их было негде, маршрута не существовало.
+ * Для жителя из браузера это значило, что смену статуса заявки, вопрос
+ * диспетчера и аварийное отключение он не узнавал никак.
+ *
+ * Сообщения от бота остаются главным каналом: они приходят, даже когда
+ * приложение закрыто. Но список должен быть и здесь — иначе половина
+ * событий продукта существует только в базе.
  */
-function notificationsScreen() {
+async function notificationsScreen() {
   const inMax = platform.inMax;
-  return `<div class="state">
-    <div class="state-icon">
-      <svg viewBox="0 0 24 24" fill="none"><path d="M6 10C6 6.7 8.4 4 12 4C15.6 4 18 6.7 18 10C18 13.5 20 15 20 16H4C4 15 6 13.5 6 10Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 19C10 20 10.9 20.8 12 20.8C13.1 20.8 14 20 14 19" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-    </div>
-    <div class="state-title">${inMax ? 'Уведомления приходят в чат' : 'Здесь уведомлений не будет'}</div>
-    <div class="state-text">
+
+  let data;
+  try {
+    data = await api.notifications();
+  } catch (error) {
+    return errorState(error, 'reload');
+  }
+
+  const channel = html`
+    <div class="dt-p" style="color:var(--tx-2);font-size:13px">
       ${inMax
-        ? 'Смена статуса заявки, отключения воды и напоминание о показаниях приходят сообщением от бота.'
-        : 'В браузере уведомления недоступны. Откройте приложение в MAX — тогда статусы заявок будут приходить сообщением от бота.'}
+        ? 'Эти же события приходят сообщением от бота — даже когда приложение закрыто.'
+        : `В браузере сообщения не приходят: этот канал работает только внутри MAX.
+           Здесь события копятся и ждут, пока вы зайдёте.`}
+    </div>`;
+
+  if (data.notifications.length === 0) {
+    return emptyState(
+      'Пока ничего не было',
+      'Здесь появятся смены статуса заявок, вопросы диспетчера и объявления об авариях',
+    ) + channel;
+  }
+
+  // Открыли список — значит прочитали: держать счётчик непрочитанного
+  // после того, как человек всё увидел, значит врать ему
+  api.readNotifications().catch(() => {});
+
+  return html`
+    <div class="list">
+      ${data.notifications.map((n) => html`
+        <div class="row">
+          <span class="sq ${n.read ? '' : 'new'}">
+            <svg viewBox="0 0 20 20" fill="none"><path d="M5 8.5C5 6 6.9 4 10 4C13.1 4 15 6 15 8.5C15 11.3 16.5 12.5 16.5 12.5H3.5C3.5 12.5 5 11.3 5 8.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          </span>
+          <div class="content">
+            <div class="t">${esc(n.title)}</div>
+            <div class="d">${esc(n.body)}</div>
+            <div class="d" style="font-size:12px">
+              ${esc(formatDate(n.at))}${n.delivered ? ' · доставлено в чат' : ''}
+            </div>
+          </div>
+        </div>`).join('')}
     </div>
-  </div>`;
+    ${channel}`;
 }
 
 function start() {
