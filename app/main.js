@@ -21,6 +21,12 @@ import {
 import {
   renderCouncil, renderCouncilHouse, handleCouncilAction,
 } from './screens/council.js';
+import {
+  renderCouncilPosts, renderCouncilPostForm, handleCouncilPostsAction,
+} from './screens/council-posts.js';
+import {
+  renderCouncilPolls, renderCouncilPollForm, handleCouncilPollsAction,
+} from './screens/council-polls.js';
 import { readTheme, applyTheme } from './theme.js';
 
 /**
@@ -62,6 +68,10 @@ const TITLES = {
   profile: ['Профиль', false],
   council: ['Совет дома', false],
   'council-house': ['Квартиры дома', false],
+  'council-posts': ['Объявления совета', false],
+  'council-post-new': ['Новое объявление', false],
+  'council-polls': ['Опросы дома', false],
+  'council-poll-new': ['Новый опрос', false],
 };
 
 /* ─────────────── высота под клавиатуру ─────────────── */
@@ -130,6 +140,23 @@ async function renderScreen(name, params = {}) {
         break;
       case 'council-house':
         setHtml(host, await renderCouncilHouse(state));
+        break;
+      case 'council-posts':
+        setHtml(host, await renderCouncilPosts(state));
+        break;
+      case 'council-post-new':
+        setHtml(host, renderCouncilPostForm());
+        // Не терять набранный текст, если мини-апп случайно свернули
+        platform.guardClosing(true);
+        state.cleanup = () => platform.guardClosing(false);
+        break;
+      case 'council-polls':
+        setHtml(host, await renderCouncilPolls(state));
+        break;
+      case 'council-poll-new':
+        setHtml(host, renderCouncilPollForm());
+        platform.guardClosing(true);
+        state.cleanup = () => platform.guardClosing(false);
         break;
       case 'request':
         setHtml(host, await renderRequestDetail(params.id));
@@ -245,10 +272,17 @@ const NAVIGATE = {
 };
 
 async function handleAction(action, target) {
-  const ctx = { state, show: (n, p) => go(n, p), go, reset, refresh };
+  /**
+   * back здесь не роскошь: экран-форма закрывается ВОЗВРАТОМ на список,
+   * а не reset-ом. reset стирает стек навигации целиком, и кнопка «Назад»
+   * в шапке пропадает — человек остаётся на списке без выхода в раздел.
+   */
+  const ctx = { state, show: (n, p) => go(n, p), go, reset, refresh, back };
 
   if (await handleRequestAction(action, target, ctx)) return;
   if (await handleCouncilAction(action, target, ctx)) return;
+  if (await handleCouncilPostsAction(action, target, ctx)) return;
+  if (await handleCouncilPollsAction(action, target, ctx)) return;
   if (await handleMeterAction(action, target, ctx)) return;
   if (await handleHouseAction(action, target, ctx)) return;
   if (await handleProfileAction(action, target, ctx)) return;

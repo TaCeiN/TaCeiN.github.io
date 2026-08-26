@@ -58,10 +58,24 @@ export async function renderCouncil(state) {
   state.council = { house };
 
   const claims = (await api.chairmanClaims().catch(() => ({ claims: [] }))).claims;
+  const summary = await api.chairmanHouse().catch(() => null);
 
   return html`
     <div class="dt-title" style="margin-top:0">${esc(house.houseLabel)}</div>
     <div class="dt-meta">Совет дома</div>
+
+    ${summary ? html`
+      <div class="stats" style="margin-top:14px">
+        <div class="stat">
+          <div class="n">${summary.totals.flats}</div><div class="l">Квартир</div>
+        </div>
+        <div class="stat">
+          <div class="n">${summary.totals.registered}</div><div class="l">В приложении</div>
+        </div>
+        <div class="stat ${claims.length ? 'warn' : ''}">
+          <div class="n">${claims.length}</div><div class="l">Ждут решения</div>
+        </div>
+      </div>` : ''}
 
     <div class="field-label">Заявки на доступ</div>
     ${claims.length === 0
@@ -75,12 +89,23 @@ export async function renderCouncil(state) {
         </div>
         <div class="list">${claims.map(claimRow).join('')}</div>`}
 
-    <button class="btn-primary secondary" data-action="council-house">
-      Квартиры дома
-    </button>
-    <button class="btn-primary secondary" data-action="council-posts">
-      Объявления и опросы
-    </button>`;
+    <div class="s-label"><h2>Дом</h2></div>
+    <div class="services">
+      <button class="svc c2" data-action="council-house">
+        <span class="ic">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M4 9L11 3.5L18 9V18H4V9Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 18V12H14V18" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="label">Квартиры дома</span>
+      </button>
+      <button class="svc c4" data-action="council-posts">
+        <span class="ic"><i class="svc-icon" style="--svc-icon:url('icons/services/feed.svg')"></i></span>
+        <span class="label">Объявления</span>
+      </button>
+      <button class="svc c3" data-action="council-polls">
+        <span class="ic"><i class="svc-icon" style="--svc-icon:url('icons/services/polls.svg')"></i></span>
+        <span class="label">Опросы</span>
+      </button>
+    </div>`;
 }
 
 function claimRow(c) {
@@ -144,12 +169,12 @@ export async function renderCouncilHouse(state) {
     <div class="dt-title" style="margin-top:0">${esc(data.address)}</div>
     <div class="dt-meta">${data.totals.flats} квартир · ${data.totals.registered} в приложении</div>
 
-    <div class="dsp-counters" style="margin-top:14px">
-      <div class="dsp-counter"><div class="n">${data.totals.paid}</div><div class="l">Оплачено</div></div>
-      <div class="dsp-counter ${data.totals.overdue ? 'warn' : ''}">
+    <div class="stats" style="margin-top:14px">
+      <div class="stat"><div class="n">${data.totals.paid}</div><div class="l">Оплачено</div></div>
+      <div class="stat ${data.totals.overdue ? 'bad' : ''}">
         <div class="n">${data.totals.overdue}</div><div class="l">Срок прошёл</div>
       </div>
-      <div class="dsp-counter"><div class="n">${data.totals.metersSubmitted}</div><div class="l">Передали показания</div></div>
+      <div class="stat"><div class="n">${data.totals.metersSubmitted}</div><div class="l">Передали показания</div></div>
     </div>
 
     <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
@@ -198,10 +223,6 @@ function flatRow(f) {
 export async function handleCouncilAction(action, target, ctx) {
   if (action === 'council-house') {
     await ctx.go('council-house');
-    return true;
-  }
-  if (action === 'council-posts') {
-    toast('Объявления и опросы совета — следующим шагом');
     return true;
   }
 

@@ -400,6 +400,17 @@ button:active, .tappable:active{ opacity:.82; }
 .svc.c6 .ic{ background:var(--grad-red); }
 .svc .label{ font-size:15px; font-weight:500; line-height:1.25; margin-top:12px; color:var(--tx); letter-spacing:-.014em; }
 
+/* Счётчики раздела «Совет дома». Раньше здесь стояли классы кабинета
+   диспетчера (.dsp-counters), которых в этом файле нет и не было:
+   три числа по дому показывались голым текстом без плашек */
+.stats{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; width:100%; }
+.stat{ background:var(--bg-card); border-radius:var(--r-m); padding:12px 10px; }
+.stat .n{ font-size:22px; font-weight:700; color:var(--tx-strong);
+          letter-spacing:-.02em; font-variant-numeric:tabular-nums; }
+.stat .l{ font-size:12px; color:var(--tx-2); margin-top:2px; line-height:1.2; }
+.stat.warn .n{ color:var(--attention); }
+.stat.bad .n{ color:var(--negative); }
+
 /* ---------- деталка / трекинг ---------- */
 .dt-title{ font-size:24px; font-weight:700; line-height:1.2; margin-top:2px; color:var(--tx-strong); letter-spacing:-.02em; }
 .dt-meta{ font-size:13px; color:var(--tx-2); margin-top:6px; font-variant-numeric:tabular-nums; }

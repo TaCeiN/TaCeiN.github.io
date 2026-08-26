@@ -903,6 +903,156 @@ async function handleAction(action, target) {
       if (state.openId) return openRequest(state.openId);
       return loadSection();
 
+    /**
+     * Переключение вкладки.
+     *
+     * Сбрасываем открытую карточку и разовые сообщения: иначе вернувшись
+     * в «Заявки», диспетчер видит карточку, из которой уже ушёл.
+     */
+    case 'tab': {
+      state.tab = target.dataset.v;
+      state.openId = null;
+      state.open = null;
+      state.freshPassword = null;
+      await loadSection();
+      return;
+    }
+
+    /* ─────────────── объявления и опросы ─────────────── */
+
+    /** Выбор типа объявления: обычные «чипы», выделение одно на группу. */
+    case 'ha-kind': {
+      const group = target.parentElement;
+      group?.querySelectorAll('.chip').forEach((chip) => chip.classList.remove('sel'));
+      target.classList.add('sel');
+
+      // Подсказка меняется вместе с типом: у аварии она про рассылку
+      const hint = document.querySelector('#haKindHint');
+      if (hint) hint.textContent = target.dataset.hint ?? '';
+      return;
+    }
+
+    case 'ha-publish': {
+      const payload = readPostForm();
+      if (!payload) {
+        toast('Заполните заголовок и текст');
+        return;
+      }
+      if (!payload.houseKey) {
+        toast('Выберите дом');
+        return;
+      }
+
+      await withLoading(target, async () => {
+        try {
+          const result = await api.createPost(payload);
+          toast(result.notified
+            ? `Опубликовано, уведомление ушло ${result.notified} жильцам`
+            : 'Опубликовано');
+          await loadSection();
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+      return;
+    }
+
+    /**
+     * Снятие объявления. Мягкое: строка остаётся в базе.
+     * Жёсткое удаление лишает дом истории — «а было ли вообще объявление
+     * про отключение?» станет неразрешимым спором между УК и жителями.
+     */
+    case 'ha-remove': {
+      await withLoading(target, async () => {
+        try {
+          await api.removePost(target.dataset.id);
+          toast('Объявление снято');
+          await loadSection();
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+      return;
+    }
+
+    case 'hp-create': {
+      const payload = readPollForm();
+      if (!payload) {
+        toast('Нужен заголовок и хотя бы два варианта, каждый с новой строки');
+        return;
+      }
+
+      const houseKey = document.querySelector('#hpHouse')?.value
+        ?? document.querySelector('#haHouse')?.value;
+      if (!houseKey) {
+        toast('Выберите дом');
+        return;
+      }
+
+      await withLoading(target, async () => {
+        try {
+          await api.createPoll({ ...payload, houseKey });
+          toast('Опрос создан');
+          await loadSection();
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+      return;
+    }
+
+    /* ─────────────── дома и адреса ─────────────── */
+
+    /**
+     * УК добавляет свой дом руками.
+     *
+     * Реестр ГИС ЖКХ отдаёт дома не всех организаций, а смена управляющей
+     * компании доходит до него неделями. Без ручного ввода жители таких
+     * домов остаются без УК, хотя компания уже работает в сервисе.
+     */
+    case 'add-house': {
+      const field = document.querySelector('#dspNewHouse');
+      const address = field?.value.trim() ?? '';
+      if (address.length < 10) {
+        toast('Нужен полный адрес с номером дома');
+        field?.focus();
+        return;
+      }
+
+      await withLoading(target, async () => {
+        try {
+          const result = await api.addHouse(address);
+          toast(result.alreadyMine ? 'Этот дом уже ваш' : 'Дом добавлен');
+          if (field) field.value = '';
+          // Список домов для выпадающих меню устарел — пересоберём
+          state.houseOptions = [];
+          await loadSection();
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+      return;
+    }
+
+    /**
+     * УК подтверждает адрес, который житель выбрал сам.
+     *
+     * Появляется, когда в квитанции адреса нет: расчётные центры печатают
+     * QR без него. Сверить с лицевым счётом может только УК — у неё биллинг.
+     */
+    case 'verify-address': {
+      await withLoading(target, async () => {
+        try {
+          await api.verifyAddress(target.dataset.id);
+          toast('Адрес сверен');
+          await loadSection();
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+      return;
+    }
+
     case 'ch-house': {
       state.chairmanCandidates =
         (await api.chairmanCandidates(target.value).catch(() => ({ candidates: [] }))).candidates;

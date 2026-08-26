@@ -208,6 +208,22 @@ export const api = {
   chairmanClaims: () => request('GET', '/api/chairman/claims'),
   decideClaim: (id, role) => request('POST', `/api/chairman/claims/${id}/approve`, { role }),
   rejectClaim: (id, reason) => request('POST', `/api/chairman/claims/${id}/reject`, { reason }),
+
+  /**
+   * Объявления и опросы совета дома.
+   *
+   * houseKey передаём всегда, хотя сервер и умеет обойтись без него:
+   * без ключа он берёт ПЕРВОЕ председательство человека, и у того,
+   * кто ведёт совет в двух домах, объявление молча уйдёт не туда.
+   */
+  chairmanPosts: (houseKey) =>
+    request('GET', `/api/chairman/posts?houseKey=${encodeURIComponent(houseKey)}`),
+  chairmanCreatePost: (payload) => request('POST', '/api/chairman/posts', payload),
+  chairmanRemovePost: (id, houseKey) =>
+    request('DELETE', `/api/chairman/posts/${id}?houseKey=${encodeURIComponent(houseKey)}`),
+  chairmanPolls: (houseKey) =>
+    request('GET', `/api/chairman/polls?houseKey=${encodeURIComponent(houseKey)}`),
+  chairmanCreatePoll: (payload) => request('POST', '/api/chairman/polls', payload),
   readNotifications: (id) => request('POST', '/api/notifications/read', id ? { id } : {}),
   submitReading: (meterId, value, confirmed) =>
     request('POST', `/api/meters/${meterId}/readings`, { value, confirmed }),
