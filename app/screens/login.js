@@ -27,7 +27,7 @@ let cameraSession = null;
 const photoFirst = platform.inMax || platform.isIos;
 
 export function renderLogin(state) {
-  const { config, error, name, addingAddress } = state;
+  const { config, error, name, addingAddress, attachTo, attachLabel } = state;
 
   /**
    * В бою вход по квитанции работает только внутри MAX.
@@ -90,21 +90,23 @@ export function renderLogin(state) {
           : html`<div class="dt-title" style="margin-top:0">
               ${name ? `${esc(name)},<br>подтвердите адрес` : 'Заречье. Дом'}
             </div>`}
-        <div class="success-p" style="margin:10px auto 0">
-          ${addingAddress
+        <div class="success-p" style="margin:10px auto 0" id="loginLead">
+          ${attachTo
             /**
-             * Два разных сценария за одной кнопкой, и оба надо назвать.
+             * Три разных сценария за одним экраном, и каждый надо назвать.
              *
-             * Чаще это ВТОРАЯ КВИТАНЦИЯ той же квартиры: свет, газ, вывоз
-             * мусора приходят отдельными платёжками. Пока экран назывался
-             * «квитанция нового адреса», человек с платёжкой за газ просто
-             * не понимал, что ему сюда.
+             * Здесь квартира уже известна: человек пришёл из неё самой.
+             * Адрес спрашивать не будем — и это стоит сказать прямо,
+             * потому что раньше форма адреса и была главной мукой.
              */
-            ? `Свет, газ, вывоз мусора приходят отдельными квитанциями —
-               отсканируйте каждую, и все они добавятся к вашей квартире.
-               Квитанция другого адреса заведёт второй адрес.`
-            : `Отсканируйте QR-код с квитанции ЖКУ — приложение само определит
-               адрес, лицевой счёт и вашу управляющую компанию`}
+            ? `Квитанция добавится к квартире ${esc(attachLabel ?? '')}.
+               Адрес спрашивать не будем — он уже известен.`
+            : addingAddress
+              ? `Это новый адрес — понадобится квитанция по нему. Свет, газ
+                 и вывоз мусора для уже добавленной квартиры добавляются
+                 внутри неё самой.`
+              : `Отсканируйте QR-код с квитанции ЖКУ — приложение само определит
+                 адрес, лицевой счёт и вашу управляющую компанию`}
         </div>
       </div>
 
@@ -123,6 +125,7 @@ export function renderLogin(state) {
 
       <div id="loginError">${error ? errorState(error) : ''}</div>
 
+      <div id="scanActions">
       ${photoFirst ? `
         <!--
           Внутри мессенджера фотография идёт первой.
@@ -184,11 +187,12 @@ export function renderLogin(state) {
           ${addingAddress ? 'Добавить по строке' : 'Войти по строке'}
         </button>
       ` : ''}
+      </div>
     </div>`;
 }
 
 /** Обработчики экрана входа. Возвращает функцию очистки. */
-export function bindLogin(root, { onSuccess, rerender }) {
+export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
   const showError = (error) => {
     const box = root.querySelector('#loginError');
     if (box) box.innerHTML = errorState(error);
@@ -212,7 +216,14 @@ export function bindLogin(root, { onSuccess, rerender }) {
 
     await withLoading(button, async () => {
       try {
-        const result = await api.loginQr(qr, extra);
+        /**
+         * Внутри объекта у квитанции другой смысл: не «впустите меня»,
+         * а «этот счёт от этой квартиры». Поэтому и маршрут другой —
+         * там уже есть сессия и выбранный объект, и адрес не спрашивается.
+         */
+        const result = attachTo
+          ? await api.attachReceipt(attachTo, qr, extra)
+          : await api.loginQr(qr, extra);
 
         /**
          * Квитанция заводит ЗАЯВКУ, а не открывает квартиру.
@@ -223,7 +234,7 @@ export function bindLogin(root, { onSuccess, rerender }) {
          */
         if (result?.status === 'pending') {
           platform.haptic('medium');
-          if (result.claimComplete) showPending(result);
+          if (result.claimComplete) await showPending(result);
           else showClaimForm(result);
           return;
         }
@@ -396,6 +407,9 @@ export function bindLogin(root, { onSuccess, rerender }) {
           там только лицевой счёт ${esc(info?.persAcc ?? '')}. Укажите адрес
           один раз, дальше он подставится сам.
         </div>
+        <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
+          Например: пр-кт Ленина, дом 85, корпус 3, квартира 27
+        </div>
 
         <div class="field-label">Улица${info?.regionName ? `, ${esc(info.regionName)}` : ''}</div>
         <input type="text" id="addrStreet" placeholder="Начните вводить название"
@@ -498,20 +512,101 @@ export function bindLogin(root, { onSuccess, rerender }) {
   }
 
   /** Экран ожидания. Проверка статуса — по кнопке, а не опросом сервера. */
-  function showPending(result) {
+  /**
+   * Заявка отправлена — и это ЕДИНСТВЕННОЕ, что остаётся на экране.
+   *
+   * Кнопки сканирования прячем целиком. Пока они стояли рядом, человек
+   * сканировал ту же квитанцию снова и снова, каждый раз получая тот же
+   * ответ, — а заодно мог отсканировать чужую и завести вторую заявку,
+   * не понимая, что делает. Ждать нечего: приложение его запомнило.
+   *
+   * Взамен показываем, что именно ушло председателю, и даём это отозвать.
+   */
+  async function showPending(result) {
     const box = root.querySelector('#loginError');
     if (!box) return;
+
+    pendingBinding = result.bindingId ?? pendingBinding;
+
+    /**
+     * Подробности берём из своего профиля, а не из ответа на квитанцию:
+     * там их нет, и передавать их через два экрана значило бы держать
+     * копию данных, которые сервер и так отдаёт по одному запросу.
+     */
+    let claim = null;
+    try {
+      const me = await api.me();
+      claim = (me.myPendingAccess ?? []).find((p) => p.bindingId === pendingBinding) ?? null;
+    } catch {
+      // Профиль не загрузился — карточку всё равно показываем, без подробностей
+    }
+
+    root.querySelector('#scanActions')?.setAttribute('hidden', '');
+    root.querySelector('#loginLead')?.setAttribute('hidden', '');
+
+    const decides = claim?.deciders?.chairman ?? result.hasChairman;
 
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
         <div class="meter-name">Заявка отправлена</div>
         <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
-          ${result.hasChairman
+          ${decides
             ? `Председатель совета дома увидит её и подтвердит доступ.`
-            : `Управляющая компания увидит её и подтвердит доступ.`}
+            : `У дома пока нет председателя. Попросите управляющую компанию
+               его назначить — это делается один раз.`}
           Повторно сканировать квитанцию не нужно — приложение вас запомнило.
         </div>
-        <button class="btn-primary" data-action="check-approval">Я получил доступ</button>
+
+        <div class="field-label">Что ушло председателю</div>
+        <div class="list">
+          ${claim?.addressRaw ? claimRow('Адрес', claim.addressRaw) : ''}
+          ${claimRow('Фамилия и имя', claim?.claimName)}
+          ${claimRow('Квартира', claim?.claimFlat)}
+          ${claim?.claimNote ? claimRow('О себе', claim.claimNote) : ''}
+        </div>
+
+        <button class="btn-primary secondary" data-action="withdraw-claim">
+          Отозвать заявку
+        </button>
+      </div>`;
+  }
+
+  /** Строка «что отправлено»: пустое поле не рисуем, оно ни о чём не говорит. */
+  function claimRow(label, value) {
+    if (!value) return '';
+    return html`
+      <div class="row">
+        <div class="content">
+          <div class="d">${esc(label)}</div>
+          <div class="t" style="margin-top:2px">${esc(value)}</div>
+        </div>
+      </div>`;
+  }
+
+  /**
+   * Отзыв — с предупреждением, потому что он необратим.
+   *
+   * Заявка удаляется из базы вместе с тем, что человек о себе рассказал.
+   * Сказать это надо ДО нажатия, а не тостом после.
+   */
+  function showWithdrawConfirm() {
+    const box = root.querySelector('#loginError');
+    if (!box) return;
+
+    box.innerHTML = html`
+      <div class="dt-card" style="margin-top:0">
+        <div class="meter-name">Отозвать заявку?</div>
+        <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+          Заявка удалится вместе с тем, что вы о себе рассказали, —
+          председатель её больше не увидит. Отсканировать квитанцию заново
+          можно в любой момент.
+        </div>
+        <button class="btn-primary" data-action="withdraw-confirm">
+          Да, отозвать
+        </button>
+        <button class="btn-primary secondary" data-action="withdraw-cancel">
+          Оставить заявку
+        </button>
       </div>`;
   }
 
@@ -676,7 +771,16 @@ export function bindLogin(root, { onSuccess, rerender }) {
       await withLoading(target, async () => {
         try {
           await api.sendClaim(pendingBinding, { name, flat, note });
-          showPending({ hasChairman: true });
+          platform.haptic('medium');
+          /**
+           * Состояние приложения обновляем ЗДЕСЬ, не уходя с экрана.
+           *
+           * Объект уже появился на сервере, и без этого профиль показывал
+           * старый список до следующей перезагрузки: человек добавлял
+           * вторую квартиру и не находил её.
+           */
+          await refreshMe?.();
+          await showPending({ hasChairman: true });
         } catch (e) {
           complain(e.message);
         }
@@ -684,26 +788,43 @@ export function bindLogin(root, { onSuccess, rerender }) {
       return;
     }
 
-    if (action === 'check-approval') {
+    if (action === 'withdraw-claim') {
+      showWithdrawConfirm();
+      return;
+    }
+
+    if (action === 'withdraw-cancel') {
+      await showPending({ hasChairman: true });
+      return;
+    }
+
+    if (action === 'withdraw-confirm') {
       /**
-       * Собственник мог подтвердить доступ в любой момент. Сессия у нас
-       * уже есть, поэтому проверка — обычная загрузка своих данных:
-       * появилась активная привязка, значит пустили.
+       * Отзыв удаляет заявку на сервере, а не прячет её на экране.
+       * После этого экран возвращается к сканированию: заявки больше нет,
+       * и предлагать «проверить доступ» стало бы неправдой.
        */
       await withLoading(target, async () => {
         try {
-          const me = await api.me();
-          if (me.properties.length > 0) {
-            platform.haptic('medium');
-            onSuccess({ status: 'ok' });
-          } else {
-            toast('Собственник пока не подтвердил доступ');
+          await api.withdrawClaim(pendingBinding);
+          pendingBinding = null;
+          platform.haptic('medium');
+          await refreshMe?.();
+          toast('Заявка отозвана');
+          if (rerender) await rerender();
+          else {
+            root.querySelector('#scanActions')?.removeAttribute('hidden');
+            root.querySelector('#loginLead')?.removeAttribute('hidden');
+            const box = root.querySelector('#loginError');
+            if (box) box.innerHTML = '';
           }
-        } catch {
-          toast('Не удалось проверить. Попробуйте ещё раз');
+        } catch (e) {
+          toast(e.message);
         }
       });
+      return;
     }
+
   };
 
   const onFile = async (event) => {

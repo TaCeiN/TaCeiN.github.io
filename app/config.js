@@ -56,3 +56,35 @@ export const tokenStore = {
     this.set(null);
   },
 };
+
+/**
+ * Какая собственность открыта «сейчас».
+ *
+ * ЗАЧЕМ. Выбор жил только в памяти вкладки: при каждом запуске приложение
+ * ставило первый объект списка. Человек с двумя квартирами переключался
+ * на вторую, закрывал мини-апп, возвращался — и снова видел первую.
+ *
+ * Ключ включает человека: на общем устройстве два аккаунта не должны
+ * подсказывать друг другу, какие у них квартиры.
+ */
+const ACTIVE_PROPERTY_KEY = 'zarechye-active-property';
+
+export const activePropertyStore = {
+  get(userId) {
+    if (!userId) return null;
+    try {
+      return localStorage.getItem(`${ACTIVE_PROPERTY_KEY}:${userId}`);
+    } catch {
+      return null;
+    }
+  },
+  set(userId, propertyId) {
+    if (!userId) return;
+    try {
+      if (propertyId) localStorage.setItem(`${ACTIVE_PROPERTY_KEY}:${userId}`, propertyId);
+      else localStorage.removeItem(`${ACTIVE_PROPERTY_KEY}:${userId}`);
+    } catch {
+      // Приватный режим блокирует хранилище — останемся на первом объекте
+    }
+  },
+};

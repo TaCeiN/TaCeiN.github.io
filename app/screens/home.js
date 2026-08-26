@@ -164,7 +164,10 @@ export async function renderHome(state) {
     <div class="idrow">
       <div>
         <button class="locpill tappable" data-action="properties">
-          ${esc(shortAddress(property))}
+          ${esc(propertyTitle(property))}
+          ${property.status === 'pending'
+            ? '<span class="pill new" style="margin-left:2px">ожидает</span>'
+            : ''}
           <svg viewBox="0 0 12 12" fill="none"><path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <div class="greetline">${esc(greeting)}, ${esc(firstName)}</div>
@@ -175,6 +178,18 @@ export async function renderHome(state) {
     </div>
 
     ${me.pendingRequests?.length ? renderAccessRequests(me.pendingRequests) : ''}
+
+    ${property.status === 'pending' ? html`
+      <div class="dt-card">
+        <div class="meter-name">Доступ к дому ещё не подтверждён</div>
+        <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+          ${waitingText(property)}
+        </div>
+        <div class="dt-p" style="font-size:14px;color:var(--tx-2)">
+          Начисления, счётчики, аналитика и обращение в управляющую компанию
+          по этой квартире работают уже сейчас.
+        </div>
+      </div>` : ''}
 
     ${councilCard(state)}
 
@@ -305,4 +320,41 @@ export function shortAddress(p) {
 
 function capitalise(value) {
   return value.replace(/(^|[\s-])([а-яёa-z])/g, (_, sep, ch) => sep + ch.toUpperCase());
+}
+
+/**
+ * Подпись объекта в списках.
+ *
+ * У ожидающего объекта адреса может не быть вовсе: сервер отдаёт его,
+ * только если человек принёс адрес сам. Это не ошибка загрузки, и писать
+ * «Адрес неизвестен» нельзя — человек решит, что приложение сломалось.
+ */
+export function propertyTitle(p) {
+  if (p.addressRaw || p.street) return shortAddress(p);
+  return 'Новый адрес';
+}
+
+/**
+ * Чего ждёт ожидающий объект.
+ *
+ * Подтверждает ВСЕГДА председатель совета дома. Если его нет, честно
+ * говорим об этом и что делать: УК назначает председателя, а не
+ * подтверждает жителей сама.
+ *
+ * Живёт здесь, а не в экране объекта: текст нужен четырём экранам,
+ * а `home.js` не импортирует ни один из них — так не возникает кольца
+ * импортов.
+ */
+export function waitingText(p) {
+  if (p.deciders?.chairman) {
+    return `Доступ к дому и соседям подтверждает председатель совета дома.
+            Сканировать квитанцию заново не нужно — мы вас запомнили.`;
+  }
+  if (p.deciders?.dispatcher) {
+    return `У дома пока нет председателя, и подтвердить доступ к соседям
+            некому. Попросите управляющую компанию его назначить —
+            это делается один раз.`;
+  }
+  return `Дома пока нет в реестре управляющих организаций, поэтому
+          подтвердить доступ к соседям некому.`;
 }

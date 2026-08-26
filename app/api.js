@@ -173,6 +173,15 @@ export const api = {
    */
   sendClaim: (bindingId, payload) =>
     request('POST', `/api/properties/claims/${bindingId}`, payload),
+  /**
+   * Отозвать свою заявку.
+   *
+   * DELETE, потому что на сервере это настоящее удаление строки: человек
+   * передумал сообщать о себе, и его ФИО с номером квартиры не должны
+   * остаться ни в очереди председателя, ни в базе.
+   */
+  withdrawClaim: (bindingId) =>
+    request('DELETE', `/api/properties/claims/${bindingId}`),
   /** Подсказка улиц загруженного региона: адрес выбирается, а не пишется */
   streets: (region, q) =>
     request('GET', `/api/address/streets?region=${encodeURIComponent(region)}&q=${encodeURIComponent(q)}`),
@@ -211,6 +220,19 @@ export const api = {
    */
   addMeter: (propertyId, payload) =>
     request('POST', `/api/properties/${propertyId}/meters`, payload),
+
+  /**
+   * Квитанция, отнесённая к своему объекту.
+   *
+   * Отдельный маршрут, а не вход по квитанции: человек уже вошёл и уже
+   * сказал, к какой квартире относит счёт, — адрес спрашивать не нужно.
+   */
+  attachReceipt: (propertyId, qr, extra) =>
+    request('POST', `/api/properties/${propertyId}/receipts`, {
+      qr,
+      client: platform.clientTag ?? undefined,
+      ...(extra ?? {}),
+    }),
   notifications: () => request('GET', '/api/notifications'),
 
   /**

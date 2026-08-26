@@ -3,6 +3,7 @@ import { platform } from '../platform.js';
 import {
   esc, html, formatDate, errorState, emptyState, toast, withLoading, plural,
 } from '../ui.js';
+import { waitingText } from './home.js';
 
 /**
  * Жизнь дома: объявления УК, объявления соседей, опросы.
@@ -25,6 +26,22 @@ const CATEGORY_TONE = {
 /* ─────────────── лента ─────────────── */
 
 export async function renderFeed(state, { category } = {}) {
+  /**
+   * Соседи, лента и опросы — уровень 1: это данные ДРУГИХ людей, и до
+   * подтверждения председателем показывать их нельзя. Пустой список здесь
+   * читался бы как «в доме ничего не происходит», а дело не в этом.
+   */
+  const waiting = state?.currentProperty;
+  if (waiting?.status === 'pending') {
+    return html`
+      <div class="dt-card" style="margin-top:0">
+        <div class="meter-name">Раздел откроется после подтверждения</div>
+        <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+          ${waitingText(waiting)}
+        </div>
+      </div>`;
+  }
+
   let posts;
   try {
     const scope = category === 'market' ? 'market' : 'house';
@@ -89,6 +106,22 @@ function categoryIcon(category) {
 /* ─────────────── карточка объявления ─────────────── */
 
 export async function renderPost(state, { id }) {
+  /**
+   * Соседи, лента и опросы — уровень 1: это данные ДРУГИХ людей, и до
+   * подтверждения председателем показывать их нельзя. Пустой список здесь
+   * читался бы как «в доме ничего не происходит», а дело не в этом.
+   */
+  const waiting = state?.currentProperty;
+  if (waiting?.status === 'pending') {
+    return html`
+      <div class="dt-card" style="margin-top:0">
+        <div class="meter-name">Раздел откроется после подтверждения</div>
+        <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+          ${waitingText(waiting)}
+        </div>
+      </div>`;
+  }
+
   let posts;
   try {
     posts = (await api.feed()).posts;
@@ -148,7 +181,23 @@ export function renderPostForm() {
 
 /* ─────────────── опросы ─────────────── */
 
-export async function renderPolls() {
+export async function renderPolls(state) {
+  /**
+   * Соседи, лента и опросы — уровень 1: это данные ДРУГИХ людей, и до
+   * подтверждения председателем показывать их нельзя. Пустой список здесь
+   * читался бы как «в доме ничего не происходит», а дело не в этом.
+   */
+  const waiting = state?.currentProperty;
+  if (waiting?.status === 'pending') {
+    return html`
+      <div class="dt-card" style="margin-top:0">
+        <div class="meter-name">Раздел откроется после подтверждения</div>
+        <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+          ${waitingText(waiting)}
+        </div>
+      </div>`;
+  }
+
   let polls;
   try {
     polls = (await api.polls()).polls;
@@ -183,6 +232,22 @@ export async function renderPolls() {
 }
 
 export async function renderPoll(state, { id }) {
+  /**
+   * Соседи, лента и опросы — уровень 1: это данные ДРУГИХ людей, и до
+   * подтверждения председателем показывать их нельзя. Пустой список здесь
+   * читался бы как «в доме ничего не происходит», а дело не в этом.
+   */
+  const waiting = state?.currentProperty;
+  if (waiting?.status === 'pending') {
+    return html`
+      <div class="dt-card" style="margin-top:0">
+        <div class="meter-name">Раздел откроется после подтверждения</div>
+        <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+          ${waitingText(waiting)}
+        </div>
+      </div>`;
+  }
+
   let p;
   try {
     p = await api.poll(id);

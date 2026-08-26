@@ -4,7 +4,8 @@ import {
   esc, html, money, formatDate, errorState, emptyState, toast, withLoading, plural,
 } from '../ui.js';
 import { readTheme, applyTheme } from '../theme.js';
-import { shortAddress } from './home.js';
+import { activePropertyStore } from '../config.js';
+import { shortAddress, propertyTitle, waitingText } from './home.js';
 
 /**
  * Профиль, адреса, доступ к адресу, оплата и аварийные службы.
@@ -26,8 +27,10 @@ export function renderProfile(state) {
       <div class="profile-avatar">${esc(initials(user?.name))}</div>
       <div class="profile-name">${esc(user?.name ?? 'Житель')}</div>
       <div class="profile-sub">
-        ${me.properties.length
-          ? esc(shortAddress(me.properties[0]))
+        ${state.currentProperty
+          // Активная собственность, а не первая в списке: под именем должно
+          // стоять то же, что стоит в шапке главной
+          ? esc(propertyTitle(state.currentProperty))
           : 'Адрес не привязан'}
       </div>
     </div>
@@ -40,25 +43,19 @@ export function renderProfile(state) {
         </button>`).join('')}
     </div>
 
-    <div class="field-label">Мои адреса</div>
+    <div class="field-label">Моя недвижимость</div>
     <div class="list">
       ${me.properties.map((p) => html`
         <button class="row tappable" data-action="properties">
           <span class="sq"><svg viewBox="0 0 20 20" fill="none"><path d="M3 8.5L10 3L17 8.5V16.5H3V8.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></span>
           <div class="content">
-            <div class="t">${esc(shortAddress(p))}</div>
+            <div class="t">${esc(propertyTitle(p))}</div>
             <div class="d">${esc(accountsLine(p))}</div>
           </div>
-          <span class="pill ${p.role === 'owner' ? 'ok' : ''}">
-            ${p.role === 'owner' ? 'собственник' : 'жилец'}
-          </span>
+          ${statusPill(p)}
         </button>`).join('')}
     </div>
-    <button class="btn-primary secondary" data-action="add-property">Добавить квитанцию</button>
-    <div class="dt-p" style="font-size:13px;color:var(--tx-2);margin-top:8px">
-      Свет, газ и вывоз мусора приходят отдельными квитанциями — они добавятся
-      к этой же квартире. Квитанция другого адреса заведёт второй адрес.
-    </div>
+    <button class="btn-primary secondary" data-action="properties">Вся недвижимость</button>
 
     <div class="field-label">Доступ и данные</div>
     <div class="list">
@@ -153,70 +150,86 @@ function accountsLine(p) {
     : `${names.slice(0, 2).join(' · ')} и ещё ${names.length - 2}`;
 }
 
+/**
+ * Пометка статуса. Ожидающий объект называется своим словом: он уже
+ * в списке, и без пометки человек решит, что доступ уже открыт.
+ */
+function statusPill(p) {
+  if (p.status === 'pending') return '<span class="pill new">ожидает</span>';
+  return html`<span class="pill ${p.role === 'owner' ? 'ok' : ''}">
+    ${p.role === 'owner' ? 'собственник' : 'жилец'}
+  </span>`;
+}
+
 export function renderProperties(state) {
   const { me } = state;
   const currentId = state.currentProperty?.propertyId;
 
+  /**
+   * Ожидающие объекты стоят в общем списке, поэтому отдельным блоком
+   * показываем только ОТКЛОНЁННЫЕ заявки: они из `properties` уходят,
+   * а причина отказа человеку нужна — иначе непонятно, что делать.
+   */
+  const rejected = (me.myPendingAccess ?? []).filter((p) => p.status === 'revoked');
+
   return html`
     <div class="list">
       ${me.properties.map((p) => html`
-        <button class="row tappable" data-action="pick-property" data-id="${esc(p.propertyId)}">
-          <span class="sq ${p.propertyId === currentId ? 'new' : ''}">
-            ${p.propertyId === currentId
-              ? '<svg viewBox="0 0 20 20" fill="none"><path d="M4.5 10.5L8.2 14.2L15.5 6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-              : '<svg viewBox="0 0 20 20" fill="none"><path d="M3 8.5L10 3L17 8.5V16.5H3V8.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>'}
-          </span>
-          <div class="content">
-            <div class="t">${esc(shortAddress(p))}</div>
-            <div class="d">
-              ${esc(accountsLine(p))}
-              ${p.bill?.sumKopecks != null ? ` · ${esc(money(p.bill.sumKopecks))}` : ''}
+        <div class="row prop-row">
+          <button class="prop-pick" data-action="pick-property" data-id="${esc(p.propertyId)}">
+            <span class="sq ${p.propertyId === currentId ? 'new' : ''}">
+              ${p.propertyId === currentId
+                ? '<svg viewBox="0 0 20 20" fill="none"><path d="M4.5 10.5L8.2 14.2L15.5 6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+                : '<svg viewBox="0 0 20 20" fill="none"><path d="M3 8.5L10 3L17 8.5V16.5H3V8.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>'}
+            </span>
+            <div class="content">
+              <div class="t">${esc(propertyTitle(p))}</div>
+              <div class="d">
+                ${esc(accountsLine(p))}
+                ${p.bill?.sumKopecks != null ? ` · ${esc(money(p.bill.sumKopecks))}` : ''}
+              </div>
+              ${p.status === 'pending' ? html`
+                <div class="d" style="color:var(--amber-deep)">
+                  ${p.deciders?.chairman
+                    ? 'Доступ к дому и соседям подтверждает председатель совета дома'
+                    : p.deciders?.dispatcher
+                      ? 'У дома пока нет председателя — попросите УК его назначить'
+                      : 'Дома пока нет в реестре управляющих организаций'}
+                </div>` : ''}
+              ${p.addressSource === 'resident' ? `
+                <div class="d" style="color:var(--amber-deep)">
+                  Адрес указали вы — управляющая компания ещё не сверила его
+                  с лицевым счётом
+                </div>` : ''}
             </div>
-            ${p.addressSource === 'resident' ? `
-              <div class="d" style="color:var(--amber-deep)">
-                Адрес указали вы — управляющая компания ещё не сверила его
-                с лицевым счётом
-              </div>` : ''}
-          </div>
-        </button>`).join('')}
+          </button>
+          ${statusPill(p)}
+          <button class="prop-more" data-action="open-property"
+                  data-id="${esc(p.propertyId)}" aria-label="Подробнее об объекте">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>`).join('')}
     </div>
 
-    ${me.myPendingAccess?.length ? html`
-      <div class="field-label">Ваши заявки на доступ</div>
+    ${rejected.length ? html`
+      <div class="field-label">Отклонённые заявки</div>
       <div class="list">
-        ${me.myPendingAccess.map((p) => html`
+        ${rejected.map((p) => html`
           <div class="row">
             <div class="content">
-              <div class="t">${p.status === 'revoked' ? 'Заявка отклонена' : 'Заявка на рассмотрении'}</div>
-              <div class="d">
-                ${p.status === 'revoked'
-                  ? esc(p.rejectReason ?? 'Причина не указана')
-                  : !p.claimComplete
-                    ? 'Расскажите о себе — без этого заявку не подтвердят'
-                    : p.deciders?.chairman
-                      ? 'Подтверждает председатель совета дома'
-                      : p.deciders?.dispatcher
-                        ? 'Подтверждает управляющая компания'
-                        : 'Дома пока нет в реестре — подтвердить некому'}
-              </div>
+              <div class="t">Заявка отклонена</div>
+              <div class="d">${esc(p.rejectReason ?? 'Причина не указана')}</div>
             </div>
-            <span class="pill ${p.status === 'revoked' ? '' : 'new'}">
-              ${p.status === 'revoked' ? 'отказ' : 'ожидает'}
-            </span>
+            <span class="pill">отказ</span>
           </div>`).join('')}
-      </div>
-
-      <div class="dt-p" style="color:var(--tx-2);font-size:13px">
-        Адрес квартиры не показывается, пока доступ не подтверждён:
-        предъявленная квитанция ещё не доказывает, что вы там живёте.
       </div>` : ''}
 
-    <button class="btn-primary" data-action="add-property">Добавить квитанцию</button>
+    <button class="btn-primary" data-action="add-property">Добавить недвижимость</button>
 
     <div class="dt-p" style="color:var(--tx-2);font-size:13px">
-      Квитанции за свет, газ и вывоз мусора добавляются к той же квартире —
-      адрес в них тот же. Квитанция по другому адресу заведёт второй адрес,
-      и если её лицевой счёт уже занят, доступ подтвердит собственник.
+      Квитанции за свет, газ и вывоз мусора добавляются внутри самой квартиры:
+      откройте её стрелкой справа. «Добавить недвижимость» — это новый адрес,
+      для него понадобится квитанция по нему.
     </div>`;
 }
 
@@ -225,6 +238,20 @@ export function renderProperties(state) {
 export async function renderAccess(state) {
   const property = state.currentProperty;
   if (!property) return emptyState('Адрес не привязан', 'Отсканируйте квитанцию');
+
+  /**
+   * Состав жильцов — данные ДРУГИХ людей, это уровень 1. Пока доступ
+   * не подтверждён, показывать нечего, и сказать об этом надо словами.
+   */
+  if (property.status === 'pending') {
+    return html`
+      <div class="dt-card" style="margin-top:0">
+        <div class="meter-name">Раздел откроется после подтверждения</div>
+        <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+          ${waitingText(property)}
+        </div>
+      </div>`;
+  }
 
   let data;
   try {
@@ -492,11 +519,17 @@ export async function handleProfileAction(action, target, ctx) {
       const found = ctx.state.me.properties.find((p) => p.propertyId === id);
       if (found) {
         ctx.state.currentProperty = found;
+        // Выбор переживает перезапуск: иначе человек возвращается к первой
+        activePropertyStore.set(ctx.state.me.user?.id, id);
         platform.haptic('light');
       }
       await ctx.reset('home');
       return true;
     }
+
+    case 'open-property':
+      await ctx.show('property', { id: target.dataset.id });
+      return true;
 
     case 'add-property':
       await ctx.show('add-property');

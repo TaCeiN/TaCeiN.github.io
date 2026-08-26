@@ -1,5 +1,6 @@
 import { api, ApiError } from './api.js';
 import { platform } from './platform.js';
+import { activePropertyStore } from './config.js';
 import {
   $, setHtml, toast, loadingState, errorState, emptyState, formatDate, esc, html,
 } from './ui.js';
@@ -18,6 +19,7 @@ import {
   renderProfile, renderProperties, renderAccess, renderPayment, renderEmergency,
   renderPrivacy, handleProfileAction,
 } from './screens/profile.js';
+import { renderProperty, handlePropertyAction } from './screens/property.js';
 import {
   renderCouncil, renderCouncilHouse, handleCouncilAction,
 } from './screens/council.js';
@@ -61,8 +63,10 @@ const TITLES = {
   analytics: ['Аналитика потребления', false],
   payment: ['Оплата ЖКУ', false],
   access: ['Доступ к адресу', false],
-  properties: ['Мои адреса', false],
-  'add-property': ['Добавить квитанцию', false],
+  properties: ['Моя недвижимость', false],
+  property: ['Объект', false],
+  'add-property': ['Добавить недвижимость', false],
+  'add-receipt': ['Добавить квитанцию', false],
   emergency: ['Аварийные службы', false],
   privacy: ['Персональные данные', false],
   profile: ['Профиль', false],
@@ -112,11 +116,35 @@ async function renderScreen(name, params = {}) {
    * абсолютное позиционирование, и вложенная страница получила бы вторую
    * полосу прокрутки и двойные поля.
    */
-  if (name === 'login' || name === 'add-property') {
+  if (name === 'login' || name === 'add-property' || name === 'add-receipt') {
     const adding = name === 'add-property';
-    setHtml(pages, renderLogin({ ...state, ...params, addingAddress: adding }));
+
+    /**
+     * Квитанция к известной квартире: адрес спрашивать не нужно, и уходит
+     * она другим маршрутом — там уже есть сессия и выбранный объект.
+     */
+    const attachTo = name === 'add-receipt' ? params.id : null;
+    const attached = attachTo
+      ? state.me?.properties.find((p) => p.propertyId === attachTo)
+      : null;
+
+    setHtml(pages, renderLogin({
+      ...state,
+      ...params,
+      addingAddress: adding,
+      attachTo,
+      attachLabel: attached ? shortAddress(attached) : '',
+    }));
     state.cleanup = bindLogin(pages, {
-      onSuccess: () => (adding ? boot() : boot({ silent: true })),
+      attachTo,
+      onSuccess: () => (name === 'login' ? boot({ silent: true }) : boot()),
+      /**
+       * Обновить свои данные, не уходя с экрана: после отправки или отзыва
+       * заявки список объектов на сервере уже другой, и профиль не должен
+       * показывать вчерашний.
+       */
+      refreshMe: async () => { state.me = await api.me(); },
+      rerender: () => renderScreen(name, params),
     });
     return;
   }
@@ -194,7 +222,7 @@ async function renderScreen(name, params = {}) {
         state.cleanup = () => platform.guardClosing(false);
         break;
       case 'polls':
-        setHtml(host, await renderPolls());
+        setHtml(host, await renderPolls(state));
         break;
       case 'poll':
         setHtml(host, await renderPoll(state, params));
@@ -205,6 +233,9 @@ async function renderScreen(name, params = {}) {
         break;
       case 'properties':
         setHtml(host, renderProperties(state));
+        break;
+      case 'property':
+        setHtml(host, renderProperty(state, params));
         break;
       case 'access':
         setHtml(host, await renderAccess(state));
@@ -254,6 +285,7 @@ function syncTabs(name) {
     polls: 'feed', poll: 'feed',
     profile: 'profile', properties: 'profile', access: 'profile',
     privacy: 'profile', 'add-property': 'profile',
+    property: 'profile', 'add-receipt': 'profile',
   };
   const active = tabFor[name];
   document.querySelectorAll('.apptab').forEach((tab) => {
@@ -286,6 +318,7 @@ async function handleAction(action, target) {
   if (await handleMeterAction(action, target, ctx)) return;
   if (await handleHouseAction(action, target, ctx)) return;
   if (await handleProfileAction(action, target, ctx)) return;
+  if (await handlePropertyAction(action, target, ctx)) return;
 
   switch (action) {
     case 'back':
@@ -342,12 +375,19 @@ async function handleAction(action, target) {
     case 'check-access':
       try {
         state.me = await api.me();
-        if (state.me.properties.length > 0) {
+        /**
+         * Подтверждение — это ACTIVE. Ожидающий объект приходит в список
+         * сразу, поэтому проверка на длину списка отвечала бы «пустили»
+         * ещё до решения председателя.
+         */
+        const approved = state.me.properties.find((p) => p.status === 'active');
+        if (approved) {
           platform.haptic('medium');
-          state.currentProperty = state.me.properties[0];
+          state.currentProperty = approved;
+          activePropertyStore.set(state.me.user?.id, approved.propertyId);
           return reset('home');
         }
-        toast('Собственник пока не подтвердил доступ');
+        toast('Председатель пока не подтвердил доступ');
       } catch (error) {
         toast(error.message);
       }
@@ -392,7 +432,19 @@ export async function boot({ silent = false } = {}) {
     return;
   }
 
-  state.currentProperty = state.me.properties[0] ?? null;
+  /**
+   * Активная собственность переживает перезапуск.
+   *
+   * Проверяем, что объект ещё в списке: доступ могли отозвать, а заявку
+   * отклонить, и тогда сохранённый выбор указывает в никуда.
+   */
+  const savedId = activePropertyStore.get(state.me.user?.id);
+  state.currentProperty = state.me.properties.find((p) => p.propertyId === savedId)
+    // Без сохранённого выбора открываем подтверждённую квартиру: на ней
+    // работает всё, а ожидающая — половина разделов с объяснением
+    ?? state.me.properties.find((p) => p.status === 'active')
+    ?? state.me.properties[0]
+    ?? null;
 
   /**
    * Председательство грузим вместе с профилем.

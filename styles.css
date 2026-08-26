@@ -382,6 +382,16 @@ button:active, .tappable:active{ opacity:.82; }
 .row .d{ font-size:13px; color:var(--tx-2); margin-top:2px; line-height:1.35; }
 .row.tappable:active, .wrow:active{ background:var(--press); opacity:1; }
 
+/* Объект недвижимости: слева выбор активной, справа переход к подробностям.
+   Строка перестала быть одной кнопкой, поэтому зоны нажатия разделены явно;
+   у стрелки свои 44px — меньше пожилому человеку не попасть. */
+.prop-row{ padding:0; }
+.prop-row .prop-pick{ display:flex; align-items:center; gap:12px; flex:1;
+  min-width:0; padding:13px 0 13px 14px; text-align:left; }
+.prop-row .prop-more{ display:flex; align-items:center; justify-content:center;
+  width:44px; align-self:stretch; color:var(--tx-2); }
+.prop-row .prop-pick:active, .prop-row .prop-more:active{ background:var(--press); }
+
 /* ---------- плитки услуг: градиентные иконки MAX ---------- */
 .services{ display:grid; grid-template-columns:1fr 1fr; gap:10px; width:100%; }
 .svc{
