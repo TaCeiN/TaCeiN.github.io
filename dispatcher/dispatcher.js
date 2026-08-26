@@ -124,9 +124,8 @@ const api = {
   revokeChairman: (id) => request('POST', `/api/dispatcher/chairmen/${id}/revoke`, {}),
   chairmanCandidates: (houseKey) =>
     request('GET', `/api/dispatcher/chairman-candidates?houseKey=${encodeURIComponent(houseKey)}`),
+  // Только чтение: подтверждает председатель, не УК
   claims: () => request('GET', '/api/dispatcher/claims'),
-  approveClaim: (id, role) => request('POST', `/api/dispatcher/claims/${id}/approve`, { role }),
-  rejectClaim: (id, reason) => request('POST', `/api/dispatcher/claims/${id}/reject`, { reason }),
 };
 
 /* ─────────────── состояние ─────────────── */
@@ -138,13 +137,31 @@ const state = {
   data: null,
   openId: null,
   open: null,
-  houses: [],
   posts: [],
   polls: [],
   chairmen: [],
   claims: [],
+  claimsNeedChairman: [],
   accounts: null,
-  houses: null,
+
+  /**
+   * ДВА РАЗНЫХ ПОЛЯ, а не одно.
+   *
+   * Раньше оба назывались `houses`, и ключ в этом объекте был объявлен
+   * дважды — второй затирал первый, поэтому при первом заходе
+   * на «Объявления» или «Председатели» `loadHouses()` падал
+   * на `null.length`. Сборщик предупреждал об этом всё время
+   * («Duplicate key "houses"»), но предупреждение никто не читал.
+   *
+   * Даже без дубля они конфликтовали по смыслу: одно поле — плоский
+   * список для выпадающих меню, другое — ответ `/api/dispatcher/houses`
+   * целиком, со сводкой по организации. После захода на вкладку «Дома»
+   * выпадающие списки получили бы объект вместо массива.
+   */
+  /** Плоский список `{houseKey, label}` для выпадающих меню */
+  houseOptions: [],
+  /** Ответ `/api/dispatcher/houses` целиком — для вкладки «Дома» */
+  housesData: null,
   /**
    * Пароль показывается ОДИН раз, сразу после назначения или сброса.
    * В базе только хеш, второй раз его негде взять — поэтому держим его
@@ -180,7 +197,7 @@ function renderLogin(error) {
 
 const TABS = [
   { id: 'requests', label: 'Заявки' },
-  { id: 'claims', label: 'Доступ жильцов' },
+  { id: 'claims', label: 'Ждут председателя' },
   { id: 'posts', label: 'Объявления дома' },
   { id: 'polls', label: 'Опросы' },
   { id: 'chairmen', label: 'Председатели' },
@@ -373,7 +390,7 @@ function renderDetail(r) {
  * можно было только curl-ом, то есть на практике никак.
  */
 function renderPosts() {
-  return renderTabs() + postForm({ houses: state.houses }) + postList(state.posts);
+  return renderTabs() + postForm({ houses: state.houseOptions }) + postList(state.posts);
 }
 
 function renderPolls() {
@@ -409,7 +426,7 @@ function renderChairmen() {
 
       <div class="field-label">Дом</div>
       <select id="chHouse" class="dsp-select" data-action="ch-house">
-        ${state.houses.map((h) => `<option value="${esc(h.houseKey)}">${esc(h.label)}</option>`).join('')}
+        ${state.houseOptions.map((h) => `<option value="${esc(h.houseKey)}">${esc(h.label)}</option>`).join('')}
       </select>
 
       <div class="field-label">Кто из жителей</div>
@@ -471,7 +488,7 @@ function renderChairmen() {
  * организацией он не является.
  */
 function renderHouses() {
-  const data = state.houses;
+  const data = state.housesData;
   const org = data.organization;
 
   return renderTabs() + html`
@@ -682,7 +699,7 @@ async function loadQueue() {
  * нужен и для объявления, и для назначения председателя.
  */
 async function loadHouses() {
-  if (state.houses.length) return;
+  if (state.houseOptions.length) return;
   const data = await api.accounts();
   const byKey = new Map();
   for (const a of data.accounts) {
@@ -691,31 +708,44 @@ async function loadHouses() {
       byKey.set(a.houseKey, String(a.address ?? '').replace(/,\s*кв\.?\s*[^,]+$/i, ''));
     }
   }
-  state.houses = [...byKey].map(([houseKey, label]) => ({ houseKey, label: label || houseKey }));
+  state.houseOptions = [...byKey].map(([houseKey, label]) => ({ houseKey, label: label || houseKey }));
 }
 
 /**
- * Заявки жильцов на доступ к своим квартирам.
+ * Кто в домах организации ждёт подтверждения — ТОЛЬКО ПРОСМОТР.
  *
- * ЗАПАСНОЙ ПУТЬ К ПРЕДСЕДАТЕЛЮ. Он есть далеко не у каждого дома,
- * а без подтверждающего житель застревает в вечном ожидании. У УК
- * есть биллинг — связка «лицевой счёт → ФИО → квартира», — и сверить
- * заявку она может точнее всех.
+ * ПОДТВЕРЖДАТЬ УК НЕ МОЖЕТ, и кнопок здесь нет ни одной. Диспетчер
+ * заходит в кабинет хорошо если раз в месяц; сделай его звеном
+ * ежедневного потока — и жители застрянут в очереди навсегда.
+ * Подтверждает председатель совета дома: он живёт в этом доме
+ * и знает соседей в лицо.
+ *
+ * Смысл этого списка ровно один: увидеть, что в доме копятся заявки,
+ * а председателя нет, — и назначить его на соседней вкладке.
  */
 function renderClaims() {
   const rows = state.claims ?? [];
+  const needChairman = state.claimsNeedChairman ?? [];
 
   return renderTabs() + html`
+    ${needChairman.length ? html`
+      <div class="dsp-banner">
+        В ${needChairman.length}
+        ${needChairman.length === 1 ? 'доме' : 'домах'} люди ждут, а председателя нет —
+        подтвердить их некому. Назначьте председателя на вкладке «Председатели»:
+        ${esc(needChairman.map((h) => `${h.address} (${h.waiting})`).join('; '))}
+      </div>` : ''}
+
     <div class="dsp-card">
-      <h2>Кто просит доступ к квартирам ваших домов</h2>
+      <h2>Кто ждёт подтверждения в ваших домах</h2>
       <div class="dt-p" style="margin-top:0;font-size:14px;color:var(--tx-2)">
-        Сверьте фамилию и квартиру со своим биллингом. Квитанция сама
-        по себе ничего не доказывает: её строку можно набрать руками.
-        Если у дома есть председатель, заявку разберёт он.
+        Подтверждает жителей <b>председатель совета дома</b> — он живёт
+        в доме и знает соседей в лицо. Здесь список только для сведения:
+        если люди копятся, а председателя нет, его нужно назначить.
       </div>
 
       ${rows.length === 0
-        ? emptyState('Заявок нет', 'Здесь появятся жильцы, отсканировавшие квитанцию')
+        ? emptyState('Никто не ждёт', 'Здесь появятся жильцы, отсканировавшие квитанцию')
         : `<div class="ha-list">${rows.map(claimRow).join('')}</div>`}
     </div>`;
 }
@@ -741,18 +771,8 @@ function claimRow(c) {
         </div>
       </div>
 
-      ${c.complete ? html`
-        <div class="dsp-actions">
-          <button class="dsp-act primary" data-action="claim-owner" data-id="${esc(c.bindingId)}">
-            Собственник
-          </button>
-          <button class="dsp-act" data-action="claim-member" data-id="${esc(c.bindingId)}">
-            Жилец
-          </button>
-          <button class="dsp-act danger" data-action="claim-reject" data-id="${esc(c.bindingId)}">
-            Отказать
-          </button>
-        </div>`
+      ${c.complete
+        ? '<span class="pill">ждёт председателя</span>'
         : '<span class="pill">ждём данных о себе</span>'}
     </div>`;
 }
@@ -761,7 +781,9 @@ async function loadSection() {
   main().innerHTML = loadingState('Загружаем…');
   try {
     if (state.tab === 'claims') {
-      state.claims = (await api.claims()).claims;
+      const data = await api.claims();
+      state.claims = data.claims;
+      state.claimsNeedChairman = data.needChairman ?? [];
       main().innerHTML = renderClaims();
       return;
     }
@@ -777,7 +799,7 @@ async function loadSection() {
       return;
     }
     if (state.tab === 'houses') {
-      state.houses = await api.houses();
+      state.housesData = await api.houses();
       main().innerHTML = renderHouses();
       return;
     }
@@ -789,7 +811,7 @@ async function loadSection() {
     if (state.tab === 'chairmen') {
       await loadHouses();
       state.chairmen = (await api.chairmen()).chairmen;
-      const first = state.houses[0]?.houseKey;
+      const first = state.houseOptions[0]?.houseKey;
       state.chairmanCandidates = first
         ? (await api.chairmanCandidates(first).catch(() => ({ candidates: [] }))).candidates
         : [];
@@ -881,137 +903,6 @@ async function handleAction(action, target) {
       if (state.openId) return openRequest(state.openId);
       return loadSection();
 
-    case 'claim-owner':
-    case 'claim-member': {
-      const role = action === 'claim-owner' ? 'owner' : 'member';
-      await withLoading(target, async () => {
-        try {
-          await api.approveClaim(target.dataset.id, role);
-          toast(role === 'owner' ? 'Подтверждён собственником' : 'Подтверждён жильцом');
-          await loadSection();
-        } catch (error) {
-          toast(error.message);
-        }
-      });
-      return;
-    }
-
-    case 'claim-reject': {
-      const reason = window.prompt('Почему отказ? Житель прочитает это в приложении');
-      if (!reason || reason.trim().length < 3) return;
-      await withLoading(target, async () => {
-        try {
-          await api.rejectClaim(target.dataset.id, reason.trim());
-          toast('Заявка отклонена');
-          await loadSection();
-        } catch (error) {
-          toast(error.message);
-        }
-      });
-      return;
-    }
-
-    case 'tab':
-      state.tab = target.dataset.v;
-      state.openId = null;
-      state.open = null;
-      state.freshPassword = null;
-      return loadSection();
-
-    case 'ha-kind': {
-      target.parentElement.querySelectorAll('.chip').forEach((c) => c.classList.remove('sel'));
-      target.classList.add('sel');
-      const hint = document.querySelector('#haKindHint');
-      if (hint) hint.textContent = target.dataset.hint ?? '';
-      return;
-    }
-
-    case 'ha-publish': {
-      const payload = readPostForm();
-      if (!payload) {
-        toast('Заполните заголовок и текст объявления');
-        return;
-      }
-      await withLoading(target, async () => {
-        try {
-          const result = await api.createPost(payload);
-          toast(result.notified
-            ? `Опубликовано, уведомление ушло ${result.notified} жильцам`
-            : 'Объявление опубликовано');
-          await loadSection();
-        } catch (error) {
-          toast(error.message);
-        }
-      });
-      return;
-    }
-
-    case 'ha-remove': {
-      await withLoading(target, async () => {
-        try {
-          await api.removePost(target.dataset.id);
-          toast('Объявление снято');
-          await loadSection();
-        } catch (error) {
-          toast(error.message);
-        }
-      });
-      return;
-    }
-
-    case 'hp-create': {
-      const payload = readPollForm();
-      if (!payload) {
-        toast('Нужен вопрос и минимум два варианта ответа');
-        return;
-      }
-      await withLoading(target, async () => {
-        try {
-          await api.createPoll(payload);
-          toast('Опрос запущен');
-          await loadSection();
-        } catch (error) {
-          toast(error.message);
-        }
-      });
-      return;
-    }
-
-    case 'add-house': {
-      const field = document.querySelector('#dspHouseAddress');
-      const address = field?.value.trim() ?? '';
-      if (address.length < 10) {
-        toast('Укажите полный адрес дома');
-        field?.focus();
-        return;
-      }
-
-      await withLoading(target, async () => {
-        try {
-          const result = await api.addHouse(address);
-          toast(result.alreadyMine ? 'Этот дом уже ваш' : 'Дом добавлен в ваш фонд');
-          await loadSection();
-        } catch (error) {
-          toast(error.message);
-        }
-      });
-      return;
-    }
-
-    case 'verify-address': {
-      await withLoading(target, async () => {
-        try {
-          await api.verifyAddress(target.dataset.id);
-          toast('Адрес подтверждён');
-          await loadSection();
-        } catch (error) {
-          toast(error.message);
-        }
-      });
-      return;
-    }
-
-    /** Смена дома в форме — подгружаем его жителей */
     case 'ch-house': {
       state.chairmanCandidates =
         (await api.chairmanCandidates(target.value).catch(() => ({ candidates: [] }))).candidates;

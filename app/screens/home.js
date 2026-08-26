@@ -82,11 +82,16 @@ export async function renderHome(state) {
    */
   if (!property && me.myPendingAccess?.length) {
     const waiting = me.myPendingAccess[0];
-    const who = waiting.deciders?.chairman
-      ? 'председатель совета дома'
-      : waiting.deciders?.dispatcher
-        ? 'управляющая компания'
-        : null;
+    /**
+     * Подтверждает ВСЕГДА председатель совета дома.
+     *
+     * Если его нет, честно говорим об этом и что делать: УК назначает
+     * председателя, а не подтверждает жителей сама. Раньше здесь было
+     * написано «подтверждает управляющая компания» — обещание, которое
+     * приложение больше не выполняет.
+     */
+    const hasChairman = waiting.deciders?.chairman;
+    const houseHasUk = waiting.deciders?.dispatcher;
 
     return html`
       <div class="dt-card" style="margin-top:0">
@@ -98,11 +103,16 @@ export async function renderHome(state) {
             ? esc(waiting.rejectReason ?? 'Причина не указана')
             : !waiting.claimComplete
               ? 'Расскажите о себе — без этого подтвердить заявку нельзя.'
-              : who
-                ? `Доступ к дому подтверждает ${who}. Сканировать квитанцию
-                   заново не нужно — мы вас запомнили.`
-                : `У дома пока нет ни председателя, ни подключённой управляющей
-                   компании. Подтвердить доступ к соседям некому.`}
+              : hasChairman
+                ? `Доступ к соседям и ленте дома подтверждает председатель
+                   совета дома. Сканировать квитанцию заново не нужно —
+                   мы вас запомнили.`
+                : houseHasUk
+                  ? `У дома пока нет председателя, и подтвердить доступ
+                     к соседям некому. Попросите управляющую компанию его
+                     назначить — это делается один раз.`
+                  : `Дома пока нет в реестре управляющих организаций,
+                     поэтому подтвердить доступ к соседям некому.`}
         </div>
         ${waiting.addressRaw
           ? html`<div class="dt-p" style="font-size:13px">${esc(waiting.addressRaw)}</div>`
