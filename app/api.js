@@ -54,6 +54,10 @@ async function request(method, path, payload, allowRelogin = true) {
   const initData = platform.initData;
   if (initData) headers['X-Max-Init-Data'] = initData;
 
+  // Клиент запуска: нужен, чтобы связать порчу кодировки с версией MAX
+  const client = platform.clientTag;
+  if (client) headers['X-Scan-Platform'] = client;
+
   // Токен вместо куки: фронт и API живут на разных доменах
   const token = tokenStore.get();
   if (token) headers.Authorization = `Bearer ${token}`;

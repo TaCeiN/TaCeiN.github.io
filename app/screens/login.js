@@ -98,6 +98,10 @@ export function renderLogin(state) {
         <video id="scannerVideo" playsinline muted></video>
         <canvas id="scannerCanvas" hidden></canvas>
         <div class="scanner-frame"></div>
+        <button class="scanner-close" data-action="scan-torch" id="torchBtn"
+                style="right:auto;left:12px" aria-label="Подсветка" hidden>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 2h6l-1 7h4l-8 13 2-9H8l1-9z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        </button>
         <button class="scanner-close" data-action="scan-stop" aria-label="Закрыть">
           <svg width="16" height="16" viewBox="0 0 12 12" fill="none"><path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         </button>
@@ -105,15 +109,34 @@ export function renderLogin(state) {
 
       <div id="loginError">${error ? errorState(error) : ''}</div>
 
-      ${canScanNative || canScanCamera ? `
-        <button class="btn-primary" data-action="scan" id="scanBtn">
-          Отсканировать квитанцию
-        </button>` : ''}
+      ${platform.isIos ? `
+        <!--
+          На айфоне фотография идёт первой.
 
-      <label class="btn-primary secondary" style="cursor:pointer">
-        Загрузить фото квитанции
-        <input type="file" accept="image/*" id="qrFile" hidden>
-      </label>
+          MAX убран из App Store 3 июня 2026, и там мессенджер живёт
+          веб-версией на домашнем экране. Мини-приложение в ней — iframe
+          с чужого origin, и камера в нём зависит от permissions policy
+          родителя, которую мы не контролируем. Фотография не зависит
+          ни от чего и приносит БАЙТЫ, то есть правильную кодировку.
+        -->
+        <label class="btn-primary" style="cursor:pointer;display:block;text-align:center">
+          Сфотографировать квитанцию
+          <input type="file" accept="image/*" id="qrFile" hidden>
+        </label>
+        ${canScanNative || canScanCamera ? `
+          <button class="btn-primary secondary" data-action="scan" id="scanBtn">
+            Отсканировать сканером мессенджера
+          </button>` : ''}
+      ` : `
+        ${canScanNative || canScanCamera ? `
+          <button class="btn-primary" data-action="scan" id="scanBtn">
+            Отсканировать квитанцию
+          </button>` : ''}
+        <label class="btn-primary secondary" style="cursor:pointer;display:block;text-align:center">
+          Загрузить фото квитанции
+          <input type="file" accept="image/*" id="qrFile" hidden>
+        </label>
+      `}
 
       <div class="field-label" style="margin-top:26px">Где искать QR-код</div>
       <div class="dt-p" style="margin-top:0">
@@ -200,6 +223,20 @@ export function bindLogin(root, { onSuccess, rerender }) {
           showWebLoginClosed(error.message);
           return;
         }
+
+        /**
+         * Кодировку испортил сканер — повторный скан ИМ ЖЕ даст тот же мусор.
+         *
+         * Единственный выход — путь, который отдаёт нам байты: фотография.
+         * Поэтому здесь не сообщение об ошибке, а кнопка, которая сразу
+         * открывает камеру системным выбором файла.
+         */
+        const reason = error instanceof ApiError ? error.body?.reason : null;
+        if (reason === 'mangled' || reason === 'unparsable_address') {
+          showPhotoFallback(error.message);
+          return;
+        }
+
         showError(error);
       }
     });
@@ -276,6 +313,28 @@ export function bindLogin(root, { onSuccess, rerender }) {
         <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
           ${esc(message)}
         </div>
+      </div>`;
+  }
+
+  /**
+   * Переход на фотографию квитанции.
+   *
+   * Нажатие пробрасывается на спрятанный `#qrFile` — тот же обработчик,
+   * что и у кнопки «Загрузить фото», и та же проверка байтов. Отдельного
+   * пути кода нет специально: два способа получить файл разъехались бы
+   * при первой же правке.
+   */
+  function showPhotoFallback(message) {
+    const box = root.querySelector('#loginError');
+    if (!box) return;
+
+    box.innerHTML = html`
+      <div class="dt-card" style="margin-top:0">
+        <div class="meter-name">Код прочитался неразборчиво</div>
+        <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+          ${esc(message)}
+        </div>
+        <button class="btn-primary" data-action="photo">Сфотографировать квитанцию</button>
       </div>`;
   }
 
@@ -419,11 +478,30 @@ export function bindLogin(root, { onSuccess, rerender }) {
   }
 
   async function startScan(button) {
-    // Внутри MAX нативный сканер лучше во всём: права, качество, скорость
+    /**
+     * Внутри MAX сначала нативный сканер: он не спрашивает прав и работает
+     * там, где наш `getUserMedia` во фрейме мессенджера может быть закрыт
+     * политикой родителя — на айфоне это обычное дело.
+     *
+     * Но исход у него не двоичный, и каждый требует своих слов.
+     */
     if (platform.inMax) {
-      const value = await scanNative();
-      if (value) await submit(value, button);
-      else toast('Сканирование отменено');
+      const scan = await scanNative();
+
+      if (scan.status === 'ok') {
+        await submit(scan.value, button, { source: 'max' });
+        return;
+      }
+      if (scan.status === 'cancelled') {
+        toast('Сканирование отменено');
+        return;
+      }
+      // Сканера в клиенте нет или он упал — молча предлагаем фотографию
+      showPhotoFallback(
+        scan.status === 'unsupported'
+          ? 'Сканер этой версии мессенджера недоступен.'
+          : 'Сканер мессенджера не смог прочитать код.',
+      );
       return;
     }
 
@@ -436,13 +514,20 @@ export function bindLogin(root, { onSuccess, rerender }) {
       canvas: root.querySelector('#scannerCanvas'),
       onResult: async (value) => {
         box.hidden = true;
-        await submit(value, button);
+        await submit(value, button, { source: 'camera' });
       },
       onError: (error) => {
         box.hidden = true;
         showError(error);
       },
     });
+
+    /**
+     * Кнопку подсветки показываем, только если она реально работает.
+     * На iOS браузер фонариком не управляет, и мёртвая кнопка хуже её отсутствия.
+     */
+    const torchBtn = root.querySelector('#torchBtn');
+    if (torchBtn) torchBtn.hidden = !cameraSession.torch(false);
   }
 
   function stopCamera() {
@@ -456,6 +541,29 @@ export function bindLogin(root, { onSuccess, rerender }) {
     const action = target.dataset.action;
 
     if (action === 'scan') await startScan(target);
+
+    if (action === 'photo') {
+      /**
+       * `capture` просим только в момент нажатия и снимаем сразу после.
+       *
+       * С постоянным `capture="environment"` iOS показывает ТОЛЬКО камеру
+       * и убирает выбор из галереи — а фотографию квитанции человек часто
+       * уже снял раньше. Здесь мы знаем, что снять надо заново, поэтому
+       * камеру открываем явно.
+       */
+      const field = root.querySelector('#qrFile');
+      if (!field) return;
+      field.setAttribute('capture', 'environment');
+      field.click();
+      setTimeout(() => field.removeAttribute('capture'), 0);
+      return;
+    }
+    if (action === 'scan-torch') {
+      const on = target.dataset.on !== '1';
+      cameraSession?.torch(on);
+      target.dataset.on = on ? '1' : '0';
+      return;
+    }
     if (action === 'scan-stop') {
       stopCamera();
       root.querySelector('#scannerBox').hidden = true;
@@ -463,7 +571,7 @@ export function bindLogin(root, { onSuccess, rerender }) {
     if (action === 'manual') {
       const value = root.querySelector('#qrManual')?.value.trim();
       if (!value) return toast('Вставьте строку QR');
-      await submit(value, target);
+      await submit(value, target, { source: 'manual' });
     }
     if (action === 'pick-street') {
       chosenStreet = { code: target.dataset.code, label: target.dataset.label };
@@ -559,7 +667,7 @@ export function bindLogin(root, { onSuccess, rerender }) {
     if (!file) return;
     try {
       const value = await scanFromFile(file);
-      await submit(value, null);
+      await submit(value, null, { source: 'photo' });
     } catch (error) {
       showError(error);
     } finally {

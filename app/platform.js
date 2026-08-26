@@ -19,6 +19,34 @@ export const platform = {
   },
 
   /**
+   * iPhone. Нужен не ради красоты — на нём другой порядок способов сканирования.
+   *
+   * MAX убран из App Store 3 июня 2026, и на айфоне мессенджер живёт
+   * веб-версией, добавленной на домашний экран. Мини-приложение там —
+   * это iframe с чужого origin, а `getUserMedia` в таком iframe работает
+   * только если родитель выставил `allow="camera"`, чего мы не контролируем.
+   * Зато `<input type="file" capture>` — системный выбор файла, ему
+   * разрешения фрейма не нужны, и он отдаёт нам БАЙТЫ.
+   *
+   * `WebApp.platform` здесь не помощник: в веб-клиенте он вернёт `web`
+   * и на айфоне, и на десктопе.
+   */
+  get isIos() {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent ?? '';
+    if (/iPhone|iPad|iPod/.test(ua)) return true;
+    // iPadOS 13+ притворяется десктопным Safari, выдаёт его только тачскрин
+    return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+  },
+
+  /** Строка вида «ios 2026.14.3 iPhone 16» — для логов сервера, не для логики. */
+  get clientTag() {
+    const b = bridge();
+    if (!b) return null;
+    return [b.platform, b.version, b.deviceName].filter(Boolean).join(' ') || null;
+  },
+
+  /**
    * Подписанные стартовые параметры.
    *
    * MAX кладёт их во фрагмент URL, а фрагмент браузер на сервер не отправляет —
@@ -124,17 +152,33 @@ export const platform = {
   },
 
   /**
-   * Нативный сканер QR внутри MAX. Работает без возни с правами на камеру
-   * и без нашего декодера — в мессенджере это лучший путь.
+   * Нативный сканер QR внутри MAX.
+   *
+   * ЧЕТЫРЕ ИСХОДА, А НЕ ДВА. Раньше метод возвращал `null` и на отсутствие
+   * моста, и на исключение, и на отказ человека — экран входа показывал
+   * «Сканирование отменено» во всех случаях, включая тот, где сканера
+   * в клиенте просто нет. Человек читал, что он что-то отменил, и пробовал
+   * снова с тем же результатом.
+   *
+   * По документации метод отдаёт `Promise<string>`; ветка с `value`
+   * оставлена на случай, если клиент вернёт объект.
    */
   async scanNative(allowGallery = true) {
     const b = bridge();
-    if (!b?.openCodeReader) return null;
+    if (typeof b?.openCodeReader !== 'function') return { status: 'unsupported' };
+
     try {
       const result = await b.openCodeReader(allowGallery);
-      return typeof result === 'string' ? result : (result?.value ?? null);
-    } catch {
-      return null;
+      const value = typeof result === 'string' ? result : (result?.value ?? null);
+      if (!value) return { status: 'cancelled' };
+      return { status: 'ok', value };
+    } catch (error) {
+      /**
+       * Отказ человека часть клиентов отдаёт отклонённым промисом, часть —
+       * пустым значением. Различить их нечем, поэтому исход `failed`
+       * показывается мягко: не красной ошибкой, а подсказкой про фотографию.
+       */
+      return { status: 'failed', message: String(error?.message ?? error) };
     }
   },
 
