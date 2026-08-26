@@ -54,10 +54,6 @@ async function request(method, path, payload, allowRelogin = true) {
   const initData = platform.initData;
   if (initData) headers['X-Max-Init-Data'] = initData;
 
-  // Клиент запуска: нужен, чтобы связать порчу кодировки с версией MAX
-  const client = platform.clientTag;
-  if (client) headers['X-Scan-Platform'] = client;
-
   // Токен вместо куки: фронт и API живут на разных доменах
   const token = tokenStore.get();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -153,7 +149,21 @@ export const api = {
   },
 
   loginMax: () => request('POST', '/api/auth/max', {}),
-  loginQr: (qr, extra) => request('POST', '/api/auth/qr', { qr, ...(extra ?? {}) }),
+  /**
+   * Вход по квитанции.
+   *
+   * Тег клиента идёт в ТЕЛЕ, а не заголовком, хотя нужен он только логам.
+   * Нестандартный заголовок превращает каждый межсайтовый запрос
+   * в предполётный OPTIONS плюс сам запрос, а забытая строка в списке
+   * `allowedHeaders` на сервере обрывает связь целиком — и приложение
+   * показывает «сервер недоступен» при живом сервере. Один раз уже стоило
+   * рабочего дня. В теле запроса этой цены нет.
+   */
+  loginQr: (qr, extra) => request('POST', '/api/auth/qr', {
+    qr,
+    client: platform.clientTag ?? undefined,
+    ...(extra ?? {}),
+  }),
   /**
    * Рассказать о себе по заявке.
    *

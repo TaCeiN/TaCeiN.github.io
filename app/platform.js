@@ -39,10 +39,16 @@ export const platform = {
     return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
   },
 
-  /** Строка вида «ios 2026.14.3 iPhone 16» — для логов сервера, не для логики. */
+  /**
+   * Строка вида «ios 2026.14.3 iPhone 16» — для логов сервера, не для логики.
+   *
+   * Вне MAX возвращает null: скрипт платформы подключён на каждой странице
+   * и объявляет `window.WebApp` даже в обычном браузере, поэтому проверять
+   * надо не наличие моста, а подписанные initData.
+   */
   get clientTag() {
     const b = bridge();
-    if (!b) return null;
+    if (!b?.initData) return null;
     return [b.platform, b.version, b.deviceName].filter(Boolean).join(' ') || null;
   },
 
