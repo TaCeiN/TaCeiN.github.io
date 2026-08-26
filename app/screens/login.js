@@ -13,6 +13,19 @@ import { esc, html, toast, withLoading, errorState } from '../ui.js';
 
 let cameraSession = null;
 
+/**
+ * Где фотография важнее сканера мессенджера.
+ *
+ * Внутри мессенджера — везде: его сканер чужой, чинить в нём нечего,
+ * а фотография проходит через наш декодер и отдаёт байты. На айфоне —
+ * даже вне мессенджера: там мини-приложение живёт во фрейме веб-версии,
+ * и камера в нём зависит от политики родителя.
+ *
+ * Объявлено на уровне модуля, а не внутри отрисовки: тем же признаком
+ * пользуются обработчики, а это другая функция и другая область видимости.
+ */
+const photoFirst = platform.inMax || platform.isIos;
+
 export function renderLogin(state) {
   const { config, error, name, addingAddress } = state;
 
@@ -63,14 +76,6 @@ export function renderLogin(state) {
   const canScanNative = platform.inMax;
   const canScanCamera = cameraAvailable();
 
-  /**
-   * Где фотография важнее сканера.
-   *
-   * Внутри мессенджера — везде: его сканер чужой, чинить в нём нечего,
-   * а фотография проходит через наш декодер и отдаёт байты. На айфоне —
-   * даже вне мессенджера, там камера во фрейме может быть закрыта.
-   */
-  const photoFirst = platform.inMax || platform.isIos;
 
 
   return html`
@@ -142,7 +147,7 @@ export function renderLogin(state) {
           Сканер мессенджера остаётся второй кнопкой: когда он срабатывает,
           это по-прежнему самый быстрый путь.
         -->
-        <label class="btn-primary" style="cursor:pointer;display:block;text-align:center">
+        <label class="btn-primary" style="cursor:pointer">
           Сфотографировать квитанцию
           <input type="file" accept="image/*" id="qrFile" hidden>
         </label>
@@ -155,7 +160,7 @@ export function renderLogin(state) {
           <button class="btn-primary" data-action="scan" id="scanBtn">
             Отсканировать квитанцию
           </button>` : ''}
-        <label class="btn-primary secondary" style="cursor:pointer;display:block;text-align:center">
+        <label class="btn-primary secondary" style="cursor:pointer">
           Загрузить фото квитанции
           <input type="file" accept="image/*" id="qrFile" hidden>
         </label>
@@ -351,13 +356,23 @@ export function bindLogin(root, { onSuccess, rerender }) {
     const box = root.querySelector('#loginError');
     if (!box) return;
 
+    /**
+     * Кнопку в карточке рисуем, только если её ещё нет на экране.
+     *
+     * Внутри мессенджера «Сфотографировать квитанцию» и так стоит первой,
+     * и вторая такая же прямо над ней читалась как сбой вёрстки: два
+     * одинаковых синих прямоугольника подряд, и непонятно, чем они
+     * отличаются. Здесь достаточно объяснить и показать пальцем.
+     */
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
         <div class="meter-name">Код прочитался неразборчиво</div>
         <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
           ${esc(message)}
+          ${photoFirst ? ' Нажмите «Сфотографировать квитанцию» ниже.' : ''}
         </div>
-        <button class="btn-primary" data-action="photo">Сфотографировать квитанцию</button>
+        ${photoFirst ? '' : html`
+          <button class="btn-primary" data-action="photo">Сфотографировать квитанцию</button>`}
       </div>`;
   }
 
