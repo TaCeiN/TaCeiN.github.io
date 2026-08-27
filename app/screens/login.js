@@ -2,6 +2,7 @@ import { api, ApiError } from '../api.js';
 import { platform } from '../platform.js';
 import { scanNative, scanWithCamera, scanFromFile, cameraAvailable } from '../qr.js';
 import { esc, html, toast, withLoading, errorState } from '../ui.js';
+import { APP_NAME } from '../config.js';
 
 /**
  * Вход по QR квитанции.
@@ -44,7 +45,7 @@ export function renderLogin(state) {
           <div class="onb-logo">
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none"><path d="M4 10.5L12 4L20 10.5V19.5C20 20 19.6 20.5 19 20.5H5C4.4 20.5 4 20 4 19.5V10.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
           </div>
-          <div class="dt-title" style="margin-top:0">Заречье. Дом</div>
+          <div class="dt-title" style="margin-top:0">${esc(APP_NAME)}</div>
           <div class="success-p" style="margin:10px auto 0">
             Приложение открывается внутри мессенджера MAX. Там личность
             подтверждает сама платформа — поэтому вход по квитанции
@@ -88,7 +89,7 @@ export function renderLogin(state) {
           // Заголовок уже стоит в шапке экрана — повторять его незачем
           ? ''
           : html`<div class="dt-title" style="margin-top:0">
-              ${name ? `${esc(name)},<br>подтвердите адрес` : 'Заречье. Дом'}
+              ${name ? `${esc(name)},<br>подтвердите адрес` : esc(APP_NAME)}
             </div>`}
         <div class="success-p" style="margin:10px auto 0" id="loginLead">
           ${attachTo

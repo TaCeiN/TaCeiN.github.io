@@ -165,9 +165,23 @@ export async function renderRequestDetail(id) {
     </div>
 
     ${r.photos?.length ? html`
-      <div class="field-label">Фотографии</div>
-      <div class="photo-row">
-        ${r.photos.map((url) => `<img class="photo-ph" src="${esc(url)}" alt="Фото к заявке">`).join('')}
+      <div class="field-label">Вложения</div>
+      <div class="list">
+        ${r.photos.map((f) => html`
+          <button class="row tappable" data-action="open-file" data-url="${esc(f.url)}">
+            <span class="sq">
+              ${f.mime?.startsWith('image/')
+                ? '<svg viewBox="0 0 20 20" fill="none"><rect x="2.5" y="4" width="15" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/><circle cx="7" cy="8.5" r="1.4" fill="currentColor"/><path d="M3 14L7.5 10.5L11 13L13.5 11L17 14" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>'
+                : '<svg viewBox="0 0 20 20" fill="none"><path d="M5 2.5h6.5L15 6v11.5H5V2.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M11.5 2.5V6H15" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>'}
+            </span>
+            <div class="content">
+              <div class="t">${esc(f.name)}</div>
+              <div class="d">
+                ${esc(fileSize(f.sizeBytes))}${f.byDispatcher ? ' · от управляющей компании' : ''}
+              </div>
+            </div>
+            <span class="chev"><svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </button>`).join('')}
       </div>` : ''}
 
     <div class="field-label">Переписка по заявке</div>
@@ -344,6 +358,20 @@ function masterSlots(now = new Date()) {
   return slots.slice(0, 6);
 }
 
+
+/**
+ * Размер файла человеческими словами.
+ *
+ * «0 КБ» у маленькой картинки читается как ошибка загрузки, поэтому
+ * всё, что меньше килобайта, называем прямо.
+ */
+function fileSize(bytes) {
+  const size = Number(bytes ?? 0);
+  if (size < 1024) return 'меньше 1 КБ';
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} КБ`;
+  return `${(size / 1024 / 1024).toFixed(1)} МБ`;
+}
+
 export function renderComplaintForm(state, kind = 'complaint') {
   const property = state.currentProperty;
   const isMaster = kind === 'master';
@@ -403,6 +431,17 @@ export function renderComplaintForm(state, kind = 'complaint') {
         Точное время мастер подтвердит в заявке.
       </div>
     ` : ''}
+
+    <div class="field-label">Фотографии и документы</div>
+    <label class="btn-primary secondary" style="cursor:pointer;display:block;text-align:center">
+      Прикрепить файл
+      <input type="file" id="reqFiles" hidden multiple
+             accept="image/*,application/pdf" data-action="pick-files">
+    </label>
+    <div id="reqFilesList" class="dt-p" style="font-size:13px;color:var(--tx-2)">
+      Фотография протечки или скан акта помогают диспетчеру больше, чем
+      описание. Можно приложить до пяти файлов, каждый до 10 МБ.
+    </div>
 
     <div class="dt-p">
       Срок реакции зависит от категории: аварии — 2 часа, сантехника
@@ -542,13 +581,85 @@ export async function handleRequestAction(action, target, ctx) {
             slotStart: slot?.start,
             slotEnd: slot?.end,
           });
+          /**
+           * Файлы уходят ПОСЛЕ создания обращения: у вложения должен быть
+           * хозяин, а до ответа сервера идентификатора ещё нет.
+           *
+           * Неудачу отдельного файла не превращаем в неудачу обращения:
+           * само обращение уже принято, и терять его из-за не влезшей
+           * фотографии нельзя. Про такие файлы честно говорим.
+           */
+          const picked = document.querySelector('#reqFiles')?.files ?? [];
+          const failed = [];
+          for (const file of Array.from(picked).slice(0, 5)) {
+            try {
+              await api.attachFile(result.id, file);
+            } catch (error) {
+              failed.push(`${file.name}: ${error.message}`);
+            }
+          }
+
           platform.haptic('medium');
           platform.guardClosing(false);
+          if (failed.length) toast(`Не удалось приложить — ${failed[0]}`);
           await ctx.show('request-success', result);
         } catch (error) {
           toast(error.message);
         }
       });
+      return true;
+    }
+
+    /**
+     * Открыть вложение.
+     *
+     * Прямой ссылкой в новую вкладку не обойтись: файл отдаётся только
+     * с сессией, а внутри мессенджера открытая вкладка её не унесёт.
+     * Поэтому качаем запросом и показываем как временный объект браузера.
+     */
+    case 'open-file': {
+      await withLoading(target, async () => {
+        try {
+          const blob = await api.fetchFile(target.dataset.url);
+          const url = URL.createObjectURL(blob);
+
+          /**
+           * Картинку показываем ПРЯМО ЗДЕСЬ, а не в новой вкладке.
+           *
+           * Внутри мессенджера новое окно часто не открывается вовсе:
+           * вебвью гасит попапы, и человек видит, что «ничего не
+           * произошло». Документ открыть больше негде, для него окно
+           * остаётся, но у фотографий — а это почти все вложения —
+           * превью надёжнее.
+           */
+          if (blob.type.startsWith('image/')) {
+            const box = target.parentElement?.querySelector('.file-preview')
+              ?? Object.assign(document.createElement('div'), { className: 'file-preview' });
+            box.innerHTML = `<img src="${url}" alt="Вложение">`;
+            target.insertAdjacentElement('afterend', box);
+          } else {
+            window.open(url, '_blank', 'noopener');
+          }
+
+          // Ссылка живёт пять минут: хватает посмотреть, и память не течёт
+          setTimeout(() => URL.revokeObjectURL(url), 300000);
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+      return true;
+    }
+
+    case 'pick-files': {
+      // Показываем, что именно выбрано: молчащая кнопка выглядит сломанной
+      const list = document.querySelector('#reqFilesList');
+      const picked = Array.from(target.files ?? []).slice(0, 5);
+      if (!list) return true;
+
+      list.innerHTML = picked.length
+        ? picked.map((f) => `<div>${esc(f.name)} · ${esc(fileSize(f.size))}</div>`).join('')
+        : `Фотография протечки или скан акта помогают диспетчеру больше, чем
+           описание. Можно приложить до пяти файлов, каждый до 10 МБ.`;
       return true;
     }
 

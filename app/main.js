@@ -1,10 +1,10 @@
 import { api, ApiError } from './api.js';
 import { platform } from './platform.js';
-import { activePropertyStore } from './config.js';
+import { activePropertyStore, APP_NAME } from './config.js';
 import {
   $, setHtml, toast, loadingState, errorState, emptyState, formatDate, esc, html, withLoading,
 } from './ui.js';
-import { initRouter, reset, go, back, refresh, current } from './router.js';
+import { initRouter, reset, go, back, refresh, current, depth } from './router.js';
 import { renderLogin, bindLogin, tryMaxLogin } from './screens/login.js';
 import { renderHome, homeSkeleton, shortAddress, greetingFor } from './screens/home.js';
 import {
@@ -45,8 +45,8 @@ const state = {
 };
 
 const TITLES = {
-  login: ['Заречье. Дом', false],
-  home: ['Заречье. Дом', true],
+  login: [APP_NAME, false],
+  home: [APP_NAME, true],
   requests: ['Мои обращения', false],
   request: ['Обращение', false],
   complaint: ['Новое обращение', false],
@@ -95,25 +95,24 @@ async function renderScreen(name, params = {}) {
   state.cleanup?.();
   state.cleanup = null;
 
-  const [title, showSub] = TITLES[name] ?? ['Заречье. Дом', false];
-  const titleNode = $('#hdTitle');
-  if (titleNode) titleNode.textContent = params.title ?? title;
-  // Пустую подпись не показываем: у дома может не быть управляющей организации
-  const sub = $('#hdSub');
-  if (sub) sub.style.display = showSub && sub.innerHTML ? 'flex' : 'none';
+  const [title] = TITLES[name] ?? ['', false];
+  const screenTitle = params.title ?? title;
 
   $('.app')?.classList.toggle('onboarding', name === 'login');
 
   /**
-   * Шапка нужна не везде.
+   * Шапки как полосы больше нет нигде.
    *
-   * На главной и на входе она несла только название приложения — то же,
-   * что мессенджер уже написал сверху сам, — и забирала высоту. На
-   * вложенных экранах она остаётся: там есть кнопка «Назад» и название
-   * раздела, без них человек теряется.
+   * Мессенджер сам рисует сверху название мини-аппа и крестик, и вторая
+   * такая же полоса под ней повторяла то же самое, забирая высоту.
+   * Осталась одна кнопка «Назад», и она показывается, только когда есть
+   * куда возвращаться; внутри MAX её роль играет нативная кнопка.
+   *
+   * Название раздела теперь первая строка самой страницы — так человек
+   * всё равно понимает, где он, а высота уходит содержимому.
    */
   const header = document.querySelector('.app-header');
-  if (header) header.hidden = name === 'home' || name === 'login';
+  if (header) header.hidden = depth() <= 1 || platform.inMax;
 
   syncTabs(name);
 
@@ -165,108 +164,118 @@ async function renderScreen(name, params = {}) {
   setHtml(pages, `<div class="page active" id="screen">${loadingState()}</div>`);
   const host = $('#screen');
 
+  /**
+   * Заголовок раздела рисуем сами, первой строкой страницы.
+   *
+   * На главной его нет: там сверху стоит адрес, и «Заречье. Дом» над ним
+   * было бы третьим повторением названия — после самого мессенджера
+   * и после иконки мини-аппа.
+   */
+  const heading = name === 'home' ? '' : `<h1 class="screen-title">${esc(screenTitle)}</h1>`;
+  const put = (content) => setHtml(host, heading + content);
+
   try {
     switch (name) {
       case 'home':
-        setHtml(host, homeSkeleton());
-        setHtml(host, await renderHome(state));
+        put(homeSkeleton());
+        put(await renderHome(state));
         break;
       case 'requests':
-        setHtml(host, await renderRequests(state));
+        put(await renderRequests(state));
         break;
       case 'council':
-        setHtml(host, await renderCouncil(state));
+        put(await renderCouncil(state));
         break;
       case 'council-house':
-        setHtml(host, await renderCouncilHouse(state));
+        put(await renderCouncilHouse(state));
         break;
       case 'council-posts':
-        setHtml(host, await renderCouncilPosts(state));
+        put(await renderCouncilPosts(state));
         break;
       case 'council-post-new':
-        setHtml(host, renderCouncilPostForm());
+        put(renderCouncilPostForm());
         // Не терять набранный текст, если мини-апп случайно свернули
         platform.guardClosing(true);
         state.cleanup = () => platform.guardClosing(false);
         break;
       case 'council-polls':
-        setHtml(host, await renderCouncilPolls(state));
+        put(await renderCouncilPolls(state));
         break;
       case 'council-poll-new':
-        setHtml(host, renderCouncilPollForm());
+        put(renderCouncilPollForm());
         platform.guardClosing(true);
         state.cleanup = () => platform.guardClosing(false);
         break;
       case 'request':
-        setHtml(host, await renderRequestDetail(params.id));
+        put(await renderRequestDetail(params.id));
         break;
       case 'complaint':
       case 'master':
-        setHtml(host, renderComplaintForm(state, name === 'master' ? 'master' : 'complaint'));
+        put(renderComplaintForm(state, name === 'master' ? 'master' : 'complaint'));
         // Не терять заполненную форму при случайном закрытии мини-аппа
         platform.guardClosing(true);
         state.cleanup = () => platform.guardClosing(false);
         break;
       case 'request-success':
-        setHtml(host, renderSuccess(params));
+        put(renderSuccess(params));
         break;
 
       case 'meters':
-        setHtml(host, await renderMeters(state));
+        put(await renderMeters(state));
         break;
       case 'analytics':
-        setHtml(host, await renderAnalytics(state));
+        put(await renderAnalytics(state));
         break;
 
       case 'feed':
-        setHtml(host, await renderFeed(state));
+        put(await renderFeed(state));
         break;
       case 'market':
-        setHtml(host, await renderFeed(state, { category: 'market' }));
+        put(await renderFeed(state, { category: 'market' }));
         break;
       case 'post':
-        setHtml(host, await renderPost(state, params));
+        put(await renderPost(state, params));
         break;
       case 'new-post':
-        setHtml(host, renderPostForm());
+        put(renderPostForm());
         platform.guardClosing(true);
         state.cleanup = () => platform.guardClosing(false);
         break;
       case 'polls':
-        setHtml(host, await renderPolls(state));
+        put(await renderPolls(state));
         break;
       case 'poll':
-        setHtml(host, await renderPoll(state, params));
+        put(await renderPoll(state, params));
         break;
 
       case 'profile':
-        setHtml(host, renderProfile(state));
+        put(renderProfile(state));
         break;
       case 'properties':
-        setHtml(host, renderProperties(state));
+        put(renderProperties(state));
         break;
       case 'access':
-        setHtml(host, await renderAccess(state));
+        put(await renderAccess(state));
         break;
       case 'payment':
-        setHtml(host, await renderPayment(state));
+        put(await renderPayment(state));
         break;
       case 'emergency':
-        setHtml(host, renderEmergency(state));
+        put(renderEmergency(state));
         break;
       case 'privacy':
-        setHtml(host, renderPrivacy());
+        put(renderPrivacy());
         break;
 
       case 'notifications':
-        setHtml(host, await notificationsScreen());
+        put(await notificationsScreen());
         break;
       case 'notify-settings':
-        setHtml(host, await renderNotifySettings());
+        put(await renderNotifySettings());
         break;
 
       default:
-        setHtml(host, `<div class="state">
+        put(`<div class="state">
           <div class="state-title">Раздел в разработке</div>
           <div class="state-text">Скоро появится</div>
         </div>`);
@@ -444,6 +453,12 @@ async function handleAction(action, target) {
         }
       });
       return;
+    }
+
+    /** Квитанция с главной уходит в открытую сейчас квартиру */
+    case 'add-receipt-home': {
+      if (!state.currentProperty) return;
+      return go('add-receipt', { id: state.currentProperty.propertyId });
     }
 
     case 'pay':
@@ -672,6 +687,8 @@ async function notificationsScreen() {
 function start() {
   applyTheme(readTheme());
   trackViewport();
+  // Прокрутка длинных списков не должна сворачивать мини-апп
+  platform.lockVerticalSwipes();
   initRouter(renderScreen);
 
   matchMedia('(prefers-color-scheme: light)')
@@ -680,6 +697,20 @@ function start() {
   document.addEventListener('click', (event) => {
     const target = event.target.closest('[data-action]');
     if (!target) return;
+    handleAction(target.dataset.action, target);
+  });
+
+  /**
+   * Поля выбора файла кликов не шлют.
+   *
+   * По кнопке-`label` человек попадает в системный диалог, а приложение
+   * узнаёт о выборе только событием `change`. Без этой строки список
+   * приложенных файлов не обновлялся, и кнопка выглядела сломанной,
+   * хотя файл на сервер уходил.
+   */
+  document.addEventListener('change', (event) => {
+    const target = event.target.closest?.('[data-action]');
+    if (!target || target.tagName !== 'INPUT') return;
     handleAction(target.dataset.action, target);
   });
 

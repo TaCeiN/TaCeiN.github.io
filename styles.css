@@ -246,11 +246,12 @@ button, .tappable{
 button:active, .tappable:active{ opacity:.82; }
 
 /* ---------- шапка приложения ---------- */
+/* Не полоса, а одна кнопка «Назад»: своё название и логотип мини-апп
+   больше не рисует — их уже нарисовал мессенджер над нами. */
 .app-header{
-  background:var(--bg-secondary);
-  padding:calc(10px + var(--safe-top)) 12px 10px;
+  background:transparent;
+  padding:calc(8px + var(--safe-top)) 12px 0;
   display:flex; align-items:center; gap:10px;
-  border-bottom:1px solid var(--sep);
   flex-shrink:0; position:relative; z-index:20;
 }
 .hd-btn{
@@ -869,10 +870,58 @@ img.photo-ph{ object-fit:cover; }
 .splash[hidden]{ display:none; }
 .splash.gone{ opacity:0; pointer-events:none; }
 .splash-logo{
-  width:84px; height:84px; border-radius:26px;
+  width:104px; height:104px; border-radius:32px;
   display:flex; align-items:center; justify-content:center;
   background:var(--brand); color:#fff;
+  animation:sp-rise .5s cubic-bezier(.2,.8,.3,1) both;
 }
-.splash-title{ font-size:20px; font-weight:600; color:var(--tx-strong); letter-spacing:-.02em; }
-.splash-greet{ font-size:15px; color:var(--tx-2); min-height:20px; text-align:center; padding:0 24px; }
-@media (prefers-reduced-motion: reduce){ .splash{ transition:none; } }
+
+/* Крыша и стены прочерчиваются линией, окна зажигаются по очереди —
+   дом просыпается ровно за то время, что грузятся данные. */
+.sp-house{
+  stroke-dasharray:190; stroke-dashoffset:190;
+  animation:sp-draw .85s ease-out .12s forwards;
+}
+.sp-win{ opacity:0; }
+.sp-win-1{ animation:sp-light 1.6s ease-in-out .75s infinite; }
+.sp-win-2{ animation:sp-light 1.6s ease-in-out .95s infinite; }
+.sp-win-3{ animation:sp-light 1.6s ease-in-out 1.15s infinite; }
+
+.splash-title{
+  font-size:26px; font-weight:700; color:var(--tx-strong); letter-spacing:-.035em;
+  animation:sp-rise .5s cubic-bezier(.2,.8,.3,1) .18s both;
+}
+.splash-greet{
+  font-size:15px; color:var(--tx-2); min-height:20px; text-align:center; padding:0 24px;
+  animation:sp-rise .5s cubic-bezier(.2,.8,.3,1) .3s both;
+}
+
+@keyframes sp-rise{ from{ opacity:0; transform:translateY(10px) scale(.96); } to{ opacity:1; transform:none; } }
+@keyframes sp-draw{ to{ stroke-dashoffset:0; } }
+@keyframes sp-light{ 0%,100%{ opacity:.2; } 45%{ opacity:1; } }
+
+/* Человеку, который просил меньше движения, показываем то же самое статично */
+@media (prefers-reduced-motion: reduce){
+  .splash{ transition:none; }
+  .splash-logo, .splash-title, .splash-greet{ animation:none; }
+  .sp-house{ stroke-dashoffset:0; animation:none; }
+  .sp-win{ opacity:1; animation:none; }
+}
+
+/* Название раздела — первая строка страницы, вместо прежней шапки. */
+.screen-title{
+  font-size:24px; font-weight:600; letter-spacing:-.03em;
+  color:var(--tx-strong); margin:0 0 14px;
+}
+
+/* Квитанция на главной: та же карточка, что у аварий, но спокойным тоном —
+   это не тревога, а частое дело раз в месяц. */
+.alert.receipt-cta{
+  background:var(--blue-soft); border-color:transparent; color:var(--tx);
+}
+.alert.receipt-cta .ic{ color:var(--accent); }
+
+/* Превью вложения раскрывается прямо в списке: в мессенджере новое окно
+   часто гасится вебвью, и человек решает, что нажатие не сработало. */
+.file-preview{ padding:0 14px 14px; }
+.file-preview img{ width:100%; border-radius:var(--r-s); display:block; }

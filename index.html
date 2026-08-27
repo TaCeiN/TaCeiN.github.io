@@ -8,9 +8,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Заречье. Дом">
+<meta name="apple-mobile-web-app-title" content="Домовой">
 <link rel="stylesheet" href="./styles.css">
-<title>Заречье. Дом — личный кабинет жителя</title>
+<title>Домовой — приложение вашего дома</title>
 <!-- Внутри MAX появится window.WebApp. Снаружи скрипта просто не будет,
      и приложение работает как обычный сайт. -->
 <script src="https://st.max.ru/js/max-web-app.js"></script>
@@ -19,15 +19,17 @@
 
 <div class="app">
 
+  <!--
+    Шапка ужата до одной кнопки «Назад».
+
+    Мессенджер уже рисует свою полосу с названием мини-аппа и крестиком,
+    и вторая такая же под ней съедала высоту и повторяла то же самое.
+    Название раздела теперь стоит первой строкой самой страницы.
+  -->
   <header class="app-header">
     <button class="hd-btn" id="hdBackBtn" data-action="back" style="display:none" aria-label="Назад">
       <svg width="16" height="16" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7L9 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
-    <span class="app-icon" id="hdIcon"><svg viewBox="0 0 100 100" width="30" height="30" role="img" aria-label="MAX" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="maxg-hd" x1="8" y1="94" x2="93" y2="7" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#00C8FF"/><stop offset=".34" stop-color="#471AFF"/><stop offset=".68" stop-color="#6E1AFF"/><stop offset="1" stop-color="#9500FF"/></linearGradient></defs><path fill="url(#maxg-hd)" fill-rule="evenodd" d="M50.7571 0.261719C78.2929 0.261719 99.8857 22.5974 99.8857 50.1474C99.8857 77.6974 77.6071 99.4903 51.0214 99.4903C41.5857 99.4903 37.0143 98.1617 29.65 92.9474C29.1429 92.5903 28.45 92.6831 28.0214 93.1403C22.3571 99.1831 7.85 103.426 7.18571 95.176C7.18571 80.7903 0 71.4474 0 49.876C0 21.5546 23.2214 0.261719 50.7571 0.261719ZM51.5286 24.8117C38.4643 24.126 28.2643 33.1974 26.0143 47.3831C24.15 59.1332 27.45 73.4546 30.2786 74.176C31.4786 74.4832 34.3571 72.276 36.4571 70.2974C36.85 69.926 37.45 69.8617 37.9071 70.1474C41.1786 72.1474 44.8786 73.6474 48.9571 73.8617C62.3714 74.5617 74.2571 64.0617 74.9643 50.6474C75.6643 37.2331 64.9429 25.5046 51.5286 24.8046V24.8117Z"/></svg></span>
-    <div class="ti">
-      <div class="tt" id="hdTitle">Заречье. Дом</div>
-      <div class="ts" id="hdSub" style="display:none"></div>
-    </div>
   </header>
 
   <div class="pages" id="pages"></div>
@@ -42,9 +44,25 @@
   -->
   <div class="splash" id="splash">
     <div class="splash-logo">
-      <svg viewBox="0 0 24 24" fill="none" width="44" height="44"><path d="M4 10.5L12 4L20 10.5V19.5C20 20 19.6 20.5 19 20.5H5C4.4 20.5 4 20 4 19.5V10.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      <!--
+        Дом, в котором по очереди зажигаются окна.
+
+        Одна метафора вместо крутящегося кружка: пока приложение
+        собирает данные, дом «просыпается». Окна зажигаются с задержкой
+        друг за другом, крыша прочерчивается линией — движение занимает
+        ровно то время, которое мы всё равно ждём сервер.
+      -->
+      <svg viewBox="0 0 64 64" fill="none" width="64" height="64" aria-hidden="true">
+        <path class="sp-house"
+              d="M8 28L32 9L56 28V54C56 55.1 55.1 56 54 56H10C8.9 56 8 55.1 8 54V28Z"
+              stroke="currentColor" stroke-width="3"
+              stroke-linejoin="round" stroke-linecap="round"/>
+        <rect class="sp-win sp-win-1" x="18" y="32" width="10" height="10" rx="2.5" fill="currentColor"/>
+        <rect class="sp-win sp-win-2" x="36" y="32" width="10" height="10" rx="2.5" fill="currentColor"/>
+        <rect class="sp-win sp-win-3" x="27" y="45" width="10" height="11" rx="2.5" fill="currentColor"/>
+      </svg>
     </div>
-    <div class="splash-title">Заречье. Дом</div>
+    <div class="splash-title" id="splashTitle">Домовой</div>
     <div class="splash-greet" id="splashGreet"></div>
   </div>
 
@@ -55,7 +73,7 @@
       <svg viewBox="0 0 24 24" fill="none"><path d="M4 10.5L12 4L20 10.5V19.5C20 20 19.6 20.5 19 20.5H5C4.4 20.5 4 20 4 19.5V10.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>Главная
     </button>
     <button class="apptab" data-tab="requests">
-      <svg viewBox="0 0 24 24" fill="none"><rect x="4.5" y="3" width="15" height="18" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 8.5H15.5M8.5 12H15.5M8.5 15.5H12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Заявления
+      <svg viewBox="0 0 24 24" fill="none"><rect x="4.5" y="3" width="15" height="18" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 8.5H15.5M8.5 12H15.5M8.5 15.5H12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Обращения
     </button>
     <button class="apptab" data-tab="feed">
       <svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="14" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M7.5 10H16.5M7.5 14H13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Дом

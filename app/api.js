@@ -218,6 +218,54 @@ export const api = {
   commentRequest: (id, text) => request('POST', `/api/requests/${id}/comment`, { text }),
 
   /**
+   * Приложить файл к обращению.
+   *
+   * Идёт мимо `request()`: там тело всегда JSON, а файл уходит формой.
+   * Заголовки те же — токен сессии и подпись MAX, иначе межсайтовый
+   * запрос не опознает человека.
+   */
+  /** Скачать вложение с сессией: публичных ссылок у файлов нет */
+  fetchFile: async (path) => {
+    const headers = {};
+    const initData = platform.initData;
+    if (initData) headers['X-Max-Init-Data'] = initData;
+    const token = tokenStore.get();
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const response = await fetch(API_BASE + path, { headers, credentials: 'same-origin' });
+    if (!response.ok) {
+      throw new ApiError('Не удалось открыть файл', {
+        status: response.status, code: 'file_error',
+      });
+    }
+    return response.blob();
+  },
+
+  attachFile: async (requestId, file) => {
+    const body = new FormData();
+    body.append('file', file, file.name);
+
+    const headers = {};
+    const initData = platform.initData;
+    if (initData) headers['X-Max-Init-Data'] = initData;
+    const token = tokenStore.get();
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const response = await fetch(`${API_BASE}/api/requests/${requestId}/files`, {
+      method: 'POST', headers, credentials: 'same-origin', body,
+    });
+
+    const text = await response.text();
+    const parsed = text ? JSON.parse(text) : null;
+    if (!response.ok) {
+      throw new ApiError(parsed?.message ?? 'Не удалось приложить файл', {
+        status: response.status, code: parsed?.error ?? 'http_error', body: parsed,
+      });
+    }
+    return parsed;
+  },
+
+  /**
    * scope: 'house' — объявления дома (УК и председатель),
    *        'market' — доска соседей. Без scope приходит всё: так главный
    *        экран одним запросом получает и баннер аварии, и остальное.

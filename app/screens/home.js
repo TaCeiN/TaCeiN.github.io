@@ -262,6 +262,22 @@ export async function renderHome(state) {
       </div>
     </button>
 
+    <!--
+      Квитанция приходит каждый месяц, и это самое частое действие после
+      оплаты. Пока кнопка жила в профиле, человек искал её заново каждый
+      раз: «куда нажать, чтобы добавить новую платёжку».
+    -->
+    <button class="alert receipt-cta" data-action="add-receipt-home">
+      <span class="ic">
+        <svg width="20" height="20" viewBox="0 0 22 22" fill="none"><path d="M5 3h12v16l-2.5-1.5L12 19l-2.5-1.5L7 19l-2-1.2V3Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 7.5h6M8 11h6M8 14.5h3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </span>
+      <div>
+        <div class="t">Добавить квитанцию</div>
+        <div class="d">Свет, газ, вода — за эту же квартиру, адрес не спросим</div>
+      </div>
+      <span class="chev"><svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+    </button>
+
     <div class="s-label"><h2>Мои обращения</h2><a data-action="requests">все</a></div>
     <div class="widget">
       ${requests.active.length

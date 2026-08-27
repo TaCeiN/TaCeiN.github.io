@@ -174,6 +174,39 @@ const main = () => document.querySelector('#dspMain');
 
 /* ─────────────── экраны ─────────────── */
 
+
+/**
+ * Вложения к обращению глазами управляющей компании.
+ *
+ * Кабинет живёт на своём домене и со своей сессией, поэтому картинку
+ * можно отдать прямо в `src`: браузер пошлёт куку сам. У жителя иначе —
+ * там фронт на Pages, чужой origin, и файл он забирает запросом.
+ */
+function attachmentsCard(r) {
+  const files = r.photos ?? [];
+  if (files.length === 0) return '';
+
+  const href = (f) => `/api/dispatcher/requests/${r.id}/files/${f.id}`;
+  const isImage = (f) => String(f.mime ?? '').startsWith('image/');
+
+  const images = files.filter(isImage).map((f) => (
+    `<a href="${esc(href(f))}" target="_blank" rel="noopener">`
+    + `<img class="photo-ph" src="${esc(href(f))}" alt="${esc(f.name ?? 'Вложение')}">`
+    + '</a>'
+  )).join('');
+
+  const docs = files.filter((f) => !isImage(f)).map((f) => (
+    `<div class="dsp-row"><a href="${esc(href(f))}" target="_blank" rel="noopener">`
+    + `${esc(f.name ?? 'Документ')}</a> `
+    + `<span class="dsp-dim">${Math.round((f.sizeBytes ?? 0) / 1024) || 1} КБ</span></div>`
+  )).join('');
+
+  return `<div class="dsp-card"><h2>Вложения от жителя</h2>`
+    + (images ? `<div class="photo-row">${images}</div>` : '')
+    + docs
+    + '</div>';
+}
+
 function renderLogin(error) {
   return html`
     <div class="dsp-login">
@@ -321,13 +354,7 @@ function renderDetail(r) {
             </div>`}
         </div>
 
-        ${(r.photos ?? []).length ? html`
-          <div class="dsp-card">
-            <h2>Фотографии от жителя</h2>
-            <div class="photo-row">
-              ${r.photos.map((url) => `<img class="photo-ph" src="${esc(url)}" alt="Фото к заявке">`).join('')}
-            </div>
-          </div>` : ''}
+        ${attachmentsCard(r)}
 
         <div class="dsp-card">
           <h2>Переписка</h2>
