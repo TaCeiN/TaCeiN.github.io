@@ -188,6 +188,27 @@ export function renderLogin(state) {
         </button>
       ` : ''}
       </div>
+
+      ${addingAddress ? `
+        <!--
+          Код приглашения на экране «Добавить недвижимость».
+
+          Второй адрес человек чаще всего добавляет своей квитанцией,
+          но бывает и наоборот: его позвал собственник другой квартиры —
+          родители, дети, съём. Сканировать ему нечего.
+        -->
+        <div class="field-label" style="margin-top:26px">Код приглашения</div>
+        <div class="dt-p" style="font-size:13px;color:var(--tx-2);margin-bottom:10px">
+          Если собственник квартиры прислал вам код, квитанция не нужна.
+        </div>
+        <input type="text" id="inviteCode" placeholder="Например, K7MD9P"
+               autocomplete="off" autocapitalize="characters"
+               style="letter-spacing:.16em;text-transform:uppercase">
+        <div class="field-error" id="inviteErr"></div>
+        <button class="btn-primary secondary" data-action="redeem-invite">
+          Войти по коду
+        </button>
+      ` : ''}
     </div>`;
 }
 
@@ -565,9 +586,17 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
           ${claim?.claimNote ? claimRow('О себе', claim.claimNote) : ''}
         </div>
 
+        <button class="btn-primary" data-action="enter-app">
+          Перейти в приложение
+        </button>
         <button class="btn-primary secondary" data-action="withdraw-claim">
           Отозвать заявку
         </button>
+        <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
+          Начисления, счётчики, аналитика и обращение в управляющую компанию
+          по этой квартире работают уже сейчас — ждать подтверждения для них
+          не нужно.
+        </div>
       </div>`;
   }
 
@@ -785,6 +814,18 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
           complain(e.message);
         }
       });
+      return;
+    }
+
+    if (action === 'enter-app') {
+      /**
+       * Выход в приложение прямо отсюда.
+       *
+       * Раньше после отправки заявки в интерфейс попадали только
+       * перезапуском мини-аппа: экран заявки был тупиком, хотя уровень 0
+       * по этой квартире уже открыт.
+       */
+      onSuccess({ status: 'pending' });
       return;
     }
 

@@ -16,16 +16,20 @@ import { esc, html, money, formatDate, plural, loadingState, errorState, emptySt
  * задаёт плитка. Так иконка остаётся белой на любом градиенте и не
  * потребует переэкспорта, если палитра поменяется.
  */
+/**
+ * Плитки — только действия по СВОЕЙ квартире.
+ *
+ * «Оплата ЖКУ» открывается карточкой начислений прямо над ними,
+ * «Объявления дома» и «Соседи предлагают» живут во вкладке «Дом»,
+ * «Шеринг доступа» — в профиле. Дублировать их плиткой значит делать
+ * из главной оглавление приложения вместо панели действий.
+ */
 const SERVICES = [
   { cls: 'c1', route: 'complaint', label: 'Подать жалобу', icon: 'complaint' },
   { cls: 'c2', route: 'master', label: 'Вызов мастера', icon: 'master' },
   { cls: 'c3', route: 'meters', label: 'Показания счётчиков', icon: 'meters' },
-  { cls: 'c5', route: 'payment', label: 'Оплата ЖКУ', icon: 'payment' },
   { cls: 'c4', route: 'analytics', label: 'Аналитика потребления', icon: 'analytics' },
   { cls: 'c3', route: 'polls', label: 'Опросы дома', icon: 'polls' },
-  { cls: 'c1', route: 'market', label: 'Соседи предлагают', icon: 'market' },
-  { cls: 'c4', route: 'feed', label: 'Объявления дома', icon: 'feed' },
-  { cls: 'c2', route: 'access', label: 'Шеринг доступа', icon: 'access' },
   { cls: 'c6', route: 'emergency', label: 'Аварийные службы', icon: 'emergency' },
 ];
 
@@ -61,6 +65,29 @@ function councilCard(state) {
       </div>
       <span class="chev"><svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
     </button>`;
+}
+
+
+/**
+ * Приём кода приглашения.
+ *
+ * Стоит там, где человек оказывается без квартиры: он пришёл по ссылке
+ * или с кодом от собственника, и сканировать ему нечего — квитанция
+ * на квартиру одна и лежит не у него.
+ */
+export function inviteCodeCard() {
+  return html`
+    <div class="dt-card">
+      <div class="meter-name">Вас пригласил собственник?</div>
+      <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+        Введите код из приглашения — квитанция для этого не нужна.
+      </div>
+      <input type="text" id="inviteCode" placeholder="Например, K7MD9P"
+             autocomplete="off" autocapitalize="characters"
+             style="letter-spacing:.16em;text-transform:uppercase">
+      <div class="field-error" id="inviteErr"></div>
+      <button class="btn-primary secondary" data-action="redeem-invite">Войти по коду</button>
+    </div>`;
 }
 
 export async function renderHome(state) {
@@ -127,22 +154,26 @@ export async function renderHome(state) {
           Удалить его она не может — только изменить статус.
         </div>
         <button class="btn-primary" data-action="complaint">Написать обращение</button>
-      </div>`;
+      </div>
+
+      ${inviteCodeCard()}`;
   }
 
   if (!property) {
-    return emptyState(
-      'Адрес не привязан',
-      'Отсканируйте квитанцию, чтобы приложение узнало ваш лицевой счёт',
-      { label: 'Отсканировать', action: 'logout' },
-    );
+    return html`
+      ${emptyState(
+        'Адрес не привязан',
+        'Отсканируйте квитанцию, чтобы приложение узнало ваш лицевой счёт',
+        { label: 'Отсканировать', action: 'logout' },
+      )}
+      ${inviteCodeCard()}`;
   }
 
   let requests = { active: [], archive: [] };
   let feed = [];
   try {
     [requests, feed] = await Promise.all([
-      api.requests(),
+      api.requests(property.propertyId),
       api.feed().then((r) => r.posts).catch(() => []),
     ]);
   } catch (error) {
@@ -157,8 +188,6 @@ export async function renderHome(state) {
    */
   const outage = feed.find((p) => p.category === 'outage' && !p.expired);
   const bill = property.bill;
-  const greeting = greetingFor(new Date());
-  const firstName = (me.user.name ?? '').split(' ')[1] ?? me.user.name;
 
   return html`
     <div class="idrow">
@@ -170,7 +199,9 @@ export async function renderHome(state) {
             : ''}
           <svg viewBox="0 0 12 12" fill="none"><path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
-        <div class="greetline">${esc(greeting)}, ${esc(firstName)}</div>
+        ${property.ukName ? html`
+          <div class="greetline"><span class="dot"></span>${esc(property.ukName)}</div>`
+          : ''}
       </div>
       <button class="bell" data-action="notifications" aria-label="Уведомления">
         <svg viewBox="0 0 24 24" fill="none"><path d="M6 10C6 6.7 8.4 4 12 4C15.6 4 18 6.7 18 10C18 13.5 20 15 20 16H4C4 15 6 13.5 6 10Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 19C10 20 10.9 20.8 12 20.8C13.1 20.8 14 20 14 19" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -302,7 +333,7 @@ function requestRow(r) {
     </button>`;
 }
 
-function greetingFor(date) {
+export function greetingFor(date) {
   const h = date.getHours();
   if (h < 6) return 'Доброй ночи';
   if (h < 12) return 'Доброе утро';

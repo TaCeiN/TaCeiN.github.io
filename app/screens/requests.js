@@ -22,10 +22,11 @@ export function requestsSkeleton() {
   return `<div class="page active" id="page-requests">${loadingState('Загружаем обращения…')}</div>`;
 }
 
-export async function renderRequests() {
+export async function renderRequests(state) {
   let data;
   try {
-    data = await api.requests();
+    // Обращения принадлежат квартире — показываем только активную
+    data = await api.requests(state?.currentProperty?.propertyId);
   } catch (error) {
     return errorState(error, 'requests');
   }

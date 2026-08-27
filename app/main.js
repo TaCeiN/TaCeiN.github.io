@@ -2,11 +2,11 @@ import { api, ApiError } from './api.js';
 import { platform } from './platform.js';
 import { activePropertyStore } from './config.js';
 import {
-  $, setHtml, toast, loadingState, errorState, emptyState, formatDate, esc, html,
+  $, setHtml, toast, loadingState, errorState, emptyState, formatDate, esc, html, withLoading,
 } from './ui.js';
 import { initRouter, reset, go, back, refresh, current } from './router.js';
 import { renderLogin, bindLogin, tryMaxLogin } from './screens/login.js';
-import { renderHome, homeSkeleton, shortAddress } from './screens/home.js';
+import { renderHome, homeSkeleton, shortAddress, greetingFor } from './screens/home.js';
 import {
   renderRequests, renderRequestDetail, renderComplaintForm, renderSuccess,
   handleRequestAction,
@@ -17,9 +17,8 @@ import {
 } from './screens/house.js';
 import {
   renderProfile, renderProperties, renderAccess, renderPayment, renderEmergency,
-  renderPrivacy, handleProfileAction,
+  renderPrivacy, renderNotifySettings, handleProfileAction,
 } from './screens/profile.js';
-import { renderProperty, handlePropertyAction } from './screens/property.js';
 import {
   renderCouncil, renderCouncilHouse, handleCouncilAction,
 } from './screens/council.js';
@@ -64,11 +63,11 @@ const TITLES = {
   payment: ['Оплата ЖКУ', false],
   access: ['Доступ к адресу', false],
   properties: ['Моя недвижимость', false],
-  property: ['Объект', false],
   'add-property': ['Добавить недвижимость', false],
   'add-receipt': ['Добавить квитанцию', false],
   emergency: ['Аварийные службы', false],
   privacy: ['Персональные данные', false],
+  'notify-settings': ['Уведомления', false],
   profile: ['Профиль', false],
   council: ['Совет дома', false],
   'council-house': ['Квартиры дома', false],
@@ -104,6 +103,18 @@ async function renderScreen(name, params = {}) {
   if (sub) sub.style.display = showSub && sub.innerHTML ? 'flex' : 'none';
 
   $('.app')?.classList.toggle('onboarding', name === 'login');
+
+  /**
+   * Шапка нужна не везде.
+   *
+   * На главной и на входе она несла только название приложения — то же,
+   * что мессенджер уже написал сверху сам, — и забирала высоту. На
+   * вложенных экранах она остаётся: там есть кнопка «Назад» и название
+   * раздела, без них человек теряется.
+   */
+  const header = document.querySelector('.app-header');
+  if (header) header.hidden = name === 'home' || name === 'login';
+
   syncTabs(name);
 
   const pages = $('#pages');
@@ -161,7 +172,7 @@ async function renderScreen(name, params = {}) {
         setHtml(host, await renderHome(state));
         break;
       case 'requests':
-        setHtml(host, await renderRequests());
+        setHtml(host, await renderRequests(state));
         break;
       case 'council':
         setHtml(host, await renderCouncil(state));
@@ -234,9 +245,6 @@ async function renderScreen(name, params = {}) {
       case 'properties':
         setHtml(host, renderProperties(state));
         break;
-      case 'property':
-        setHtml(host, renderProperty(state, params));
-        break;
       case 'access':
         setHtml(host, await renderAccess(state));
         break;
@@ -252,6 +260,9 @@ async function renderScreen(name, params = {}) {
 
       case 'notifications':
         setHtml(host, await notificationsScreen());
+        break;
+      case 'notify-settings':
+        setHtml(host, await renderNotifySettings());
         break;
 
       default:
@@ -284,8 +295,8 @@ function syncTabs(name) {
     feed: 'feed', market: 'feed', post: 'feed', 'new-post': 'feed',
     polls: 'feed', poll: 'feed',
     profile: 'profile', properties: 'profile', access: 'profile',
-    privacy: 'profile', 'add-property': 'profile',
-    property: 'profile', 'add-receipt': 'profile',
+    privacy: 'profile', 'add-property': 'profile', 'notify-settings': 'profile',
+    'add-receipt': 'profile',
   };
   const active = tabFor[name];
   document.querySelectorAll('.apptab').forEach((tab) => {
@@ -300,6 +311,7 @@ const NAVIGATE = {
   feed: 'feed', profile: 'profile', meters: 'meters', analytics: 'analytics',
   polls: 'polls', market: 'market', payment: 'payment', access: 'access',
   emergency: 'emergency', properties: 'properties', notifications: 'notifications',
+  'notify-settings': 'notify-settings',
   council: 'council',
 };
 
@@ -309,7 +321,11 @@ async function handleAction(action, target) {
    * а не reset-ом. reset стирает стек навигации целиком, и кнопка «Назад»
    * в шапке пропадает — человек остаётся на списке без выхода в раздел.
    */
-  const ctx = { state, show: (n, p) => go(n, p), go, reset, refresh, back };
+  const ctx = {
+    state, show: (n, p) => go(n, p), go, reset, refresh, back,
+    /** Перечитать свой профиль: список объектов и статусы могли измениться */
+    refreshMe: async () => { state.me = await api.me(); },
+  };
 
   if (await handleRequestAction(action, target, ctx)) return;
   if (await handleCouncilAction(action, target, ctx)) return;
@@ -318,7 +334,6 @@ async function handleAction(action, target) {
   if (await handleMeterAction(action, target, ctx)) return;
   if (await handleHouseAction(action, target, ctx)) return;
   if (await handleProfileAction(action, target, ctx)) return;
-  if (await handlePropertyAction(action, target, ctx)) return;
 
   switch (action) {
     case 'back':
@@ -393,6 +408,44 @@ async function handleAction(action, target) {
       }
       return;
 
+    /**
+     * Вход по коду приглашения.
+     *
+     * Отдельно от квитанции: здесь человека впускает не платёжка,
+     * а поручительство собственника. Ошибки называем словами — «код
+     * не найден», «срок истёк», «им уже воспользовались»: человек должен
+     * понимать, просить ли новый код или искать опечатку.
+     */
+    case 'redeem-invite': {
+      const field = document.querySelector('#inviteCode');
+      const box = document.querySelector('#inviteErr');
+      const code = (field?.value ?? '').trim();
+
+      if (code.length < 4) {
+        if (box) {
+          box.textContent = 'Введите код из приглашения';
+          box.classList.add('show');
+        }
+        return;
+      }
+      box?.classList.remove('show');
+
+      await withLoading(target, async () => {
+        try {
+          await api.redeemInvite(code);
+          platform.haptic('medium');
+          toast('Квартира добавлена');
+          await boot();
+        } catch (error) {
+          if (box) {
+            box.textContent = error.message;
+            box.classList.add('show');
+          }
+        }
+      });
+      return;
+    }
+
     case 'pay':
       return go('payment');
 
@@ -403,9 +456,52 @@ async function handleAction(action, target) {
 
 /* ─────────────── запуск ─────────────── */
 
-export async function boot({ silent = false } = {}) {
+/**
+ * Заставка при открытии.
+ *
+ * Держим её, пока грузятся данные, но не меньше 1,2 секунды: на быстром
+ * интернете мелькание читается как сбой отрисовки. Заодно это единственное
+ * место, где приложение здоровается — на главной приветствие занимало
+ * строку при каждом заходе.
+ */
+const SPLASH_MIN_MS = 1200;
+/** Ссылку-приглашение принимаем один раз за запуск: код одноразовый */
+let inviteFromLinkTried = false;
+let splashShownAt = 0;
+
+function showSplash() {
+  const splash = $('#splash');
+  if (!splash) return;
+  splash.hidden = false;
+  splash.classList.remove('gone');
+  splashShownAt = Date.now();
+}
+
+function splashGreeting(name) {
+  const node = $('#splashGreet');
+  if (!node) return;
+  const firstName = String(name ?? '').trim().split(/\s+/)[1] ?? name;
+  node.textContent = firstName ? `${greetingFor(new Date())}, ${firstName}` : '';
+}
+
+async function hideSplash() {
+  const splash = $('#splash');
+  if (!splash || splash.hidden) return;
+
+  const left = SPLASH_MIN_MS - (Date.now() - splashShownAt);
+  if (left > 0) await new Promise((done) => setTimeout(done, left));
+
+  splash.classList.add('gone');
+  // Прячем после анимации, иначе прозрачный слой перехватывает нажатия
+  setTimeout(() => { splash.hidden = true; }, 340);
+}
+
+async function bootInner({ silent = false } = {}) {
   const pages = $('#pages');
-  if (!silent) setHtml(pages, `<div class="page active">${loadingState()}</div>`);
+  if (!silent) {
+    showSplash();
+    setHtml(pages, `<div class="page active">${loadingState()}</div>`);
+  }
 
   try {
     state.config = await api.config();
@@ -438,6 +534,33 @@ export async function boot({ silent = false } = {}) {
    * Проверяем, что объект ещё в списке: доступ могли отозвать, а заявку
    * отклонить, и тогда сохранённый выбор указывает в никуда.
    */
+  splashGreeting(state.me.user?.name);
+
+  /**
+   * Приглашение, открытое ссылкой.
+   *
+   * Собственник присылает `max.ru/<бот>?startapp=<код>`; мессенджер отдаёт
+   * этот код нам в `start_param`. Человек уже нажал на ссылку — спрашивать
+   * его ещё раз незачем, принимаем сразу. Одна попытка за запуск: код
+   * одноразовый, и повторные вызовы отвечали бы «им уже воспользовались»
+   * на собственное же приглашение.
+   */
+  if (!inviteFromLinkTried) {
+    inviteFromLinkTried = true;
+    const linkCode = (platform.startParam ?? '').trim();
+    if (/^[A-Za-z0-9]{5,12}$/.test(linkCode)) {
+      try {
+        await api.redeemInvite(linkCode);
+        state.me = await api.me();
+        toast('Квартира добавлена — вас пригласил собственник');
+      } catch (error) {
+        // Код мог протухнуть или уже сработать: человеку это надо сказать,
+        // но приложение обязано открыться в любом случае
+        toast(error.message);
+      }
+    }
+  }
+
   const savedId = activePropertyStore.get(state.me.user?.id);
   state.currentProperty = state.me.properties.find((p) => p.propertyId === savedId)
     // Без сохранённого выбора открываем подтверждённую квартиру: на ней
@@ -455,17 +578,11 @@ export async function boot({ silent = false } = {}) {
   state.chairman = await api.chairmanMe().catch(() => ({ isChairman: false, houses: [] }));
 
   /**
-   * Имя управляющей организации приходит из реестра и может отсутствовать:
-   * дома нет в реестре ГИС ЖКХ либо УК ещё не подтвердила адрес. Тогда
-   * подпись прячется целиком — подставлять сюда «УК» или демонстрационное
-   * название значит соврать жителю о том, кто его обслуживает.
+   * Название управляющей организации живёт на самой главной, под адресом:
+   * шапки там больше нет. Оно приходит из реестра и может отсутствовать —
+   * тогда строки просто не будет, подставлять «УК» вместо настоящего
+   * названия значит соврать о том, кто обслуживает дом.
    */
-  const sub = $('#hdSub');
-  if (sub) {
-    const ukName = state.currentProperty?.ukName;
-    sub.innerHTML = ukName ? `<span class="dot"></span>${esc(ukName)}` : '';
-    sub.style.display = ukName ? 'flex' : 'none';
-  }
 
   /**
    * Тихая перезагрузка нужна там, где данные обновились, а экран менять
@@ -476,6 +593,19 @@ export async function boot({ silent = false } = {}) {
   const screen = current();
   if (silent && screen && screen.name !== 'login') return refresh();
   return reset('home');
+}
+
+/**
+ * Загрузка приложения. Заставка снимается в любом исходе — включая отказ
+ * сервера и протухшую сессию: оставить её на экране значило бы показать
+ * человеку вечный логотип вместо объяснения.
+ */
+export async function boot(options = {}) {
+  try {
+    return await bootInner(options);
+  } finally {
+    await hideSplash();
+  }
 }
 
 /**

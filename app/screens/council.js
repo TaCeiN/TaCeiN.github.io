@@ -232,6 +232,15 @@ export async function handleCouncilAction(action, target, ctx) {
       try {
         await api.decideClaim(target.dataset.id, role);
         toast(role === 'owner' ? 'Подтверждён собственником' : 'Подтверждён жильцом');
+        /**
+         * Свой профиль тоже обновляем.
+         *
+         * Председатель часто подтверждает СЕБЯ — вторую свою квартиру,
+         * и без этого у него в «Моей недвижимости» продолжала висеть
+         * плашка «ожидает», хотя в базе уже стояло `active`. Очередь
+         * при этом обновлялась, и выглядело как поломка подтверждения.
+         */
+        await ctx.refreshMe?.();
         await ctx.refresh();
       } catch (error) {
         toast(error.message);
@@ -249,6 +258,7 @@ export async function handleCouncilAction(action, target, ctx) {
       try {
         await api.rejectClaim(target.dataset.id, reason.trim());
         toast('Заявка отклонена');
+        await ctx.refreshMe?.();
         await ctx.refresh();
       } catch (error) {
         toast(error.message);

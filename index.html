@@ -32,6 +32,22 @@
 
   <div class="pages" id="pages"></div>
 
+  <!--
+    Заставка при открытии.
+
+    Прячет холодный старт: пока она на экране, приложение успевает
+    получить профиль, объекты и начисления. Приветствие переехало сюда
+    с главной — там оно занимало строку на каждом заходе, а здесь
+    показывается ровно один раз и по делу.
+  -->
+  <div class="splash" id="splash">
+    <div class="splash-logo">
+      <svg viewBox="0 0 24 24" fill="none" width="44" height="44"><path d="M4 10.5L12 4L20 10.5V19.5C20 20 19.6 20.5 19 20.5H5C4.4 20.5 4 20 4 19.5V10.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="splash-title">Заречье. Дом</div>
+    <div class="splash-greet" id="splashGreet"></div>
+  </div>
+
   <div class="toast" id="toast"></div>
 
   <nav class="apptabs">

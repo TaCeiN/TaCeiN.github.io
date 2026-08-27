@@ -64,7 +64,7 @@ export function renderProfile(state) {
             esc(state.chairman.houses[0]?.houseLabel ?? 'Подтверждение жильцов, объявления, опросы'))
         : ''}
       ${row('access', 'Кто видит мой адрес', 'Домочадцы и запросы доступа')}
-      ${row('notifications', 'Уведомления', notificationsHint())}
+      ${row('notify-settings', 'Уведомления', notificationsHint())}
       ${row('privacy', 'Персональные данные', 'Что мы храним и как это удалить')}
     </div>
 
@@ -87,10 +87,38 @@ function row(action, title, hint) {
     </button>`;
 }
 
+/**
+ * Отдать приглашение человеку.
+ *
+ * Кладём в буфер и код, и ссылку: ссылка открывает мини-приложение сразу
+ * и работает у тех, кто в MAX, а код можно продиктовать голосом — для
+ * пожилого человека это часто единственный рабочий путь.
+ */
+async function shareInvite(state, code) {
+  if (!code) return;
+
+  const bot = state.config?.botUsername;
+  const link = bot ? `https://max.ru/${bot}?startapp=${code}` : null;
+  const text = link
+    ? `Код для входа в приложение дома: ${code}
+${link}`
+    : `Код для входа в приложение дома: ${code}`;
+
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Код и ссылка скопированы');
+  } catch {
+    // Буфер закрыт политикой браузера — код всё равно виден на экране
+    toast(`Код: ${code}`);
+  }
+}
+
 function notificationsHint() {
+  // Вкладка ведёт в НАСТРОЙКИ доставки, а не в список событий: список
+  // открывается колокольчиком на главной, и дублировать его незачем
   return platform.inMax
-    ? 'Приходят сообщением от бота в MAX'
-    : 'В браузере уведомления не приходят — откройте приложение в MAX';
+    ? 'Что присылать сообщением от бота'
+    : 'Что присылать ботом — сработает, когда откроете приложение в MAX';
 }
 
 function initials(name) {
@@ -175,8 +203,7 @@ export function renderProperties(state) {
   return html`
     <div class="list">
       ${me.properties.map((p) => html`
-        <div class="row prop-row">
-          <button class="prop-pick" data-action="pick-property" data-id="${esc(p.propertyId)}">
+        <button class="row tappable" data-action="pick-property" data-id="${esc(p.propertyId)}">
             <span class="sq ${p.propertyId === currentId ? 'new' : ''}">
               ${p.propertyId === currentId
                 ? '<svg viewBox="0 0 20 20" fill="none"><path d="M4.5 10.5L8.2 14.2L15.5 6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>'
@@ -202,13 +229,8 @@ export function renderProperties(state) {
                   с лицевым счётом
                 </div>` : ''}
             </div>
-          </button>
           ${statusPill(p)}
-          <button class="prop-more" data-action="open-property"
-                  data-id="${esc(p.propertyId)}" aria-label="Подробнее об объекте">
-            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-        </div>`).join('')}
+        </button>`).join('')}
     </div>
 
     ${rejected.length ? html`
@@ -224,12 +246,88 @@ export function renderProperties(state) {
           </div>`).join('')}
       </div>` : ''}
 
-    <button class="btn-primary" data-action="add-property">Добавить недвижимость</button>
+    ${state.currentProperty ? html`
+      <button class="btn-primary" data-action="add-receipt-active">
+        Добавить квитанцию
+      </button>
+      <div class="dt-p" style="color:var(--tx-2);font-size:13px">
+        Квитанция добавится к выбранной квартире — ${esc(propertyTitle(state.currentProperty))}.
+        Свет, газ и вывоз мусора приходят отдельными квитанциями, адрес
+        спрашивать не будем.
+      </div>` : ''}
+
+    <button class="btn-primary secondary" data-action="add-property">
+      Добавить недвижимость
+    </button>
 
     <div class="dt-p" style="color:var(--tx-2);font-size:13px">
-      Квитанции за свет, газ и вывоз мусора добавляются внутри самой квартиры:
-      откройте её стрелкой справа. «Добавить недвижимость» — это новый адрес,
-      для него понадобится квитанция по нему.
+      «Добавить недвижимость» — это новый адрес, для него понадобится
+      квитанция по нему.
+    </div>`;
+}
+
+
+/* ─────────────── настройки уведомлений ─────────────── */
+
+/**
+ * Что присылать ботом.
+ *
+ * Вкладка в профиле больше не дублирует колокольчик на главной: там
+ * события, здесь — доставка. Сверху четыре режима, под ними подробная
+ * настройка. Тронул переключатель — режим сам становится «свой»,
+ * иначе экран показывал бы «Только важное» человеку, который включил
+ * себе напоминания о счётчиках.
+ */
+const NOTIFY_MODES = [
+  ['all', 'Все'],
+  ['important', 'Только важное'],
+  ['off', 'Выключены'],
+  ['custom', 'Свой'],
+];
+
+export async function renderNotifySettings() {
+  let data;
+  try {
+    data = await api.notifySettings();
+  } catch (error) {
+    return errorState(error, 'reload');
+  }
+
+  return html`
+    <div class="field-label" style="margin-top:0">Как присылать</div>
+    <div class="segmented" id="notifyModes">
+      ${NOTIFY_MODES.map(([value, label]) => html`
+        <button class="${data.mode === value ? 'on' : ''}"
+                data-action="notify-mode" data-v="${esc(value)}">${esc(label)}</button>`).join('')}
+    </div>
+
+    <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
+      ${platform.inMax
+        ? 'Сообщения приходят от бота в MAX, даже когда приложение закрыто.'
+        : `В браузере сообщения не приходят — этот канал работает внутри MAX.
+           Настройка запомнится и сработает там.`}
+      Выключенное уведомление всё равно останется в списке на главной:
+      молчит только бот.
+    </div>
+
+    <div class="field-label">Что присылать</div>
+    <div class="list">
+      ${data.available.map((k) => html`
+        <button class="row tappable" data-action="notify-kind" data-k="${esc(k.kind)}"
+                data-on="${data.kinds[k.kind] ? '1' : '0'}">
+          <div class="content">
+            <div class="t">${esc(k.label)}</div>
+            <div class="d">${esc(k.hint)}</div>
+          </div>
+          <span class="pill ${data.kinds[k.kind] ? 'ok' : ''}">
+            ${data.kinds[k.kind] ? 'вкл' : 'выкл'}
+          </span>
+        </button>`).join('')}
+    </div>
+
+    <div class="dt-p" style="color:var(--tx-2);font-size:13px">
+      «Только важное» — это ваши обращения, доступ к квартире и аварии
+      в доме. Начисления и напоминания о счётчиках в этот режим не входят.
     </div>`;
 }
 
@@ -265,8 +363,45 @@ export async function renderAccess(state) {
   const pending = (state.me.pendingRequests ?? [])
     .filter((p) => p.propertyId === property.propertyId);
 
+  /**
+   * Приглашения показываем только собственнику: звать жильцов может он,
+   * и список кодов — его инструмент, а не общая информация о квартире.
+   */
+  const canInvite = property.role === 'owner' && property.status === 'active';
+  const invites = canInvite
+    ? await api.invites(property.propertyId).then((r) => r.invites).catch(() => [])
+    : [];
+
   return html`
     <div class="dt-meta" style="margin-top:0">${esc(shortAddress(property))}</div>
+
+    ${canInvite ? html`
+      <div class="field-label">Пригласить жильца</div>
+      <div class="dt-p" style="font-size:13px;color:var(--tx-2);margin-top:0">
+        Квитанция на квартиру одна, и сканировать её домочадцу незачем.
+        Пришлите код — человек войдёт по нему и сразу получит доступ
+        к квартире. Код действует двое суток и срабатывает один раз.
+      </div>
+
+      ${invites.length ? html`
+        <div class="list">
+          ${invites.map((i) => html`
+            <div class="row">
+              <div class="content">
+                <div class="t" style="letter-spacing:.18em;font-size:19px">${esc(i.code)}</div>
+                <div class="d">Действует до ${esc(formatDate(i.expiresAt))}</div>
+              </div>
+              <button class="pay-quickbtn tappable" style="background:var(--fade)"
+                      data-action="copy-invite" data-code="${esc(i.code)}">Скопировать</button>
+              <button class="pay-quickbtn tappable"
+                      style="background:var(--fade);color:var(--negative)"
+                      data-action="revoke-invite" data-id="${esc(i.id)}">Отозвать</button>
+            </div>`).join('')}
+        </div>` : ''}
+
+      <button class="btn-primary secondary" data-action="create-invite">
+        ${invites.length ? 'Ещё одно приглашение' : 'Пригласить жильца'}
+      </button>` : ''}
 
     ${pending.length ? html`
       <div class="field-label">Просят доступ</div>
@@ -311,8 +446,8 @@ export async function renderAccess(state) {
     </div>
 
     <div class="dt-p" style="color:var(--tx-2);font-size:13px">
-      Чтобы дать доступ близкому, покажите ему квитанцию — он сканирует
-      тот же QR и попадает сюда как жилец. Отдельного приглашения не нужно.
+      Домочадцу квитанция не нужна: пришлите ему код приглашения,
+      и он войдёт по нему сразу.
       ${data.canManage
         ? ' Отзыв доступа действует сразу: вход с его устройства перестанет работать.'
         : ''}
@@ -527,12 +662,77 @@ export async function handleProfileAction(action, target, ctx) {
       return true;
     }
 
-    case 'open-property':
-      await ctx.show('property', { id: target.dataset.id });
+    case 'add-receipt-active': {
+      // Квитанция всегда уходит в ту квартиру, что открыта сейчас
+      const current = ctx.state.currentProperty;
+      if (!current) return true;
+      await ctx.show('add-receipt', { id: current.propertyId });
       return true;
+    }
 
     case 'add-property':
       await ctx.show('add-property');
+      return true;
+
+    case 'notify-mode':
+      await withLoading(target, async () => {
+        try {
+          await api.saveNotifySettings({ mode: target.dataset.v });
+          platform.haptic('light');
+          await ctx.refresh();
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+      return true;
+
+    case 'notify-kind': {
+      // Режим пересчитает сервер: он же решает, стал ли набор «своим»
+      const kind = target.dataset.k;
+      const next = target.dataset.on !== '1';
+      await withLoading(target, async () => {
+        try {
+          const saved = await api.saveNotifySettings({ kinds: { [kind]: next } });
+          platform.haptic('light');
+          if (saved.mode === 'custom') toast('Режим переключён на «Свой»');
+          await ctx.refresh();
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+      return true;
+    }
+
+    case 'create-invite': {
+      const property = ctx.state.currentProperty;
+      if (!property) return true;
+      await withLoading(target, async () => {
+        try {
+          const made = await api.createInvite(property.propertyId);
+          platform.haptic('medium');
+          await shareInvite(ctx.state, made.code);
+          await ctx.refresh();
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+      return true;
+    }
+
+    case 'copy-invite':
+      await shareInvite(ctx.state, target.dataset.code);
+      return true;
+
+    case 'revoke-invite':
+      await withLoading(target, async () => {
+        try {
+          await api.revokeInvite(target.dataset.id);
+          toast('Приглашение отозвано');
+          await ctx.refresh();
+        } catch (error) {
+          toast(error.message);
+        }
+      });
       return true;
 
     case 'revoke': {

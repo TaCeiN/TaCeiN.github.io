@@ -61,8 +61,23 @@ export async function renderFeed(state, { category } = {}) {
 
   const isMarket = category === 'market';
 
+  /**
+   * Две доски — один экран.
+   *
+   * Плитки с главной убраны, и переключатель здесь стал единственным
+   * входом на доску соседей. Смешивать доски нельзя: рядом с объявлением
+   * УК «продам велосипед» обесценивает первое, а объявление соседа
+   * начинает выглядеть официальным.
+   */
+  const boards = html`
+    <div class="segmented" style="margin-bottom:14px">
+      <button class="${isMarket ? '' : 'on'}" data-action="feed">Объявления дома</button>
+      <button class="${isMarket ? 'on' : ''}" data-action="market">Соседи предлагают</button>
+    </div>`;
+
   if (posts.length === 0) {
     return html`
+      ${boards}
       ${emptyState(
         isMarket ? 'Пока никто ничего не предлагает' : 'Объявлений нет',
         isMarket
@@ -73,6 +88,7 @@ export async function renderFeed(state, { category } = {}) {
   }
 
   return html`
+    ${boards}
     <div class="list">${posts.map(postRow).join('')}</div>
     ${isMarket ? '<button class="btn-primary" data-action="new-post">Разместить объявление</button>' : ''}`;
 }

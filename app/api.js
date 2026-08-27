@@ -190,7 +190,27 @@ export const api = {
   revokeAccess: (bindingId) => request('POST', `/api/properties/${bindingId}/revoke`, {}),
   household: (propertyId) => request('GET', `/api/properties/${propertyId}/household`),
 
-  requests: () => request('GET', '/api/requests'),
+  /**
+   * Приглашение жильца.
+   *
+   * Квитанция на квартиру одна и лежит у собственника — домочадцу нечего
+   * сканировать. Собственник зовёт его кодом, и доступ открывается сразу:
+   * за приглашённого поручился тот, кто знает, кто у него живёт.
+   */
+  createInvite: (propertyId) =>
+    request('POST', `/api/properties/${propertyId}/invites`, {}),
+  invites: (propertyId) => request('GET', `/api/properties/${propertyId}/invites`),
+  revokeInvite: (inviteId) => request('DELETE', `/api/invites/${inviteId}`),
+  redeemInvite: (code) => request('POST', '/api/invites/redeem', { code }),
+
+  /**
+   * Обращения ОДНОЙ квартиры — той, что открыта в приложении.
+   * Без адреса сервер отдаёт всё доступное; так ведёт себя старый фронт.
+   */
+  requests: (propertyId) => request(
+    'GET',
+    propertyId ? `/api/requests?propertyId=${encodeURIComponent(propertyId)}` : '/api/requests',
+  ),
   request: (id) => request('GET', `/api/requests/${id}`),
   createRequest: (payload) => request('POST', '/api/requests', payload),
   rateRequest: (id, stars, comment) =>
@@ -234,6 +254,9 @@ export const api = {
       ...(extra ?? {}),
     }),
   notifications: () => request('GET', '/api/notifications'),
+  /** Настройки доставки: что присылать ботом, а что оставить только в списке */
+  notifySettings: () => request('GET', '/api/notifications/settings'),
+  saveNotifySettings: (payload) => request('POST', '/api/notifications/settings', payload),
 
   /**
    * Совет дома. Отдельного входа нет: это та же сессия жителя,

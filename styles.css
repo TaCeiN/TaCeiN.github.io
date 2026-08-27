@@ -291,7 +291,18 @@ button:active, .tappable:active{ opacity:.82; }
   color:var(--tx-strong); letter-spacing:-.027em; text-align:left;
 }
 .idrow .locpill svg{ width:12px; height:12px; color:var(--tx-2); flex-shrink:0; }
-.idrow .greetline{ font-size:13px; color:var(--tx-2); margin-top:3px; }
+.idrow .greetline{ font-size:13px; color:var(--tx-2); margin-top:3px;
+  display:flex; align-items:center; gap:5px; }
+/* Зелёная точка у названия управляющей организации — та же, что стояла
+   в шапке приложения: шапки на главной больше нет, а знать, кто обслуживает
+   дом, человеку надо. */
+.idrow .greetline .dot{ width:6px; height:6px; border-radius:50%;
+  background:var(--positive); flex-shrink:0; }
+
+/* Шапка прячется на экранах, где она ничего не несёт: на главной и входе
+   заголовок дублировал название мини-аппа в самом мессенджере, а высота
+   уходила впустую. */
+.app-header[hidden]{ display:none; }
 .bell{
   width:44px; height:44px; border-radius:45%; background:var(--bg-card);
   display:flex; align-items:center; justify-content:center; position:relative; flex-shrink:0;
@@ -382,15 +393,6 @@ button:active, .tappable:active{ opacity:.82; }
 .row .d{ font-size:13px; color:var(--tx-2); margin-top:2px; line-height:1.35; }
 .row.tappable:active, .wrow:active{ background:var(--press); opacity:1; }
 
-/* Объект недвижимости: слева выбор активной, справа переход к подробностям.
-   Строка перестала быть одной кнопкой, поэтому зоны нажатия разделены явно;
-   у стрелки свои 44px — меньше пожилому человеку не попасть. */
-.prop-row{ padding:0; }
-.prop-row .prop-pick{ display:flex; align-items:center; gap:12px; flex:1;
-  min-width:0; padding:13px 0 13px 14px; text-align:left; }
-.prop-row .prop-more{ display:flex; align-items:center; justify-content:center;
-  width:44px; align-self:stretch; color:var(--tx-2); }
-.prop-row .prop-pick:active, .prop-row .prop-more:active{ background:var(--press); }
 
 /* ---------- плитки услуг: градиентные иконки MAX ---------- */
 .services{ display:grid; grid-template-columns:1fr 1fr; gap:10px; width:100%; }
@@ -856,3 +858,21 @@ img.photo-ph{ object-fit:cover; }
   -webkit-mask-size: contain;
   mask-size: contain;
 }
+
+/* ---------- заставка при открытии ---------- */
+.splash{
+  position:absolute; inset:0; z-index:60;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
+  background:var(--bg-ground);
+  transition:opacity .32s ease;
+}
+.splash[hidden]{ display:none; }
+.splash.gone{ opacity:0; pointer-events:none; }
+.splash-logo{
+  width:84px; height:84px; border-radius:26px;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--brand); color:#fff;
+}
+.splash-title{ font-size:20px; font-weight:600; color:var(--tx-strong); letter-spacing:-.02em; }
+.splash-greet{ font-size:15px; color:var(--tx-2); min-height:20px; text-align:center; padding:0 24px; }
+@media (prefers-reduced-motion: reduce){ .splash{ transition:none; } }
