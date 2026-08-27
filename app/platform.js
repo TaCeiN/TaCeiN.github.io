@@ -176,36 +176,6 @@ export const platform = {
     }
   },
 
-  /**
-   * Нативный сканер QR внутри MAX.
-   *
-   * ЧЕТЫРЕ ИСХОДА, А НЕ ДВА. Раньше метод возвращал `null` и на отсутствие
-   * моста, и на исключение, и на отказ человека — экран входа показывал
-   * «Сканирование отменено» во всех случаях, включая тот, где сканера
-   * в клиенте просто нет. Человек читал, что он что-то отменил, и пробовал
-   * снова с тем же результатом.
-   *
-   * По документации метод отдаёт `Promise<string>`; ветка с `value`
-   * оставлена на случай, если клиент вернёт объект.
-   */
-  async scanNative(allowGallery = true) {
-    const b = bridge();
-    if (typeof b?.openCodeReader !== 'function') return { status: 'unsupported' };
-
-    try {
-      const result = await b.openCodeReader(allowGallery);
-      const value = typeof result === 'string' ? result : (result?.value ?? null);
-      if (!value) return { status: 'cancelled' };
-      return { status: 'ok', value };
-    } catch (error) {
-      /**
-       * Отказ человека часть клиентов отдаёт отклонённым промисом, часть —
-       * пустым значением. Различить их нечем, поэтому исход `failed`
-       * показывается мягко: не красной ошибкой, а подсказкой про фотографию.
-       */
-      return { status: 'failed', message: String(error?.message ?? error) };
-    }
-  },
 
   /** Реальная высота вьюпорта внутри вебвью. */
   async viewportHeight() {

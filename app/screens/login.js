@@ -1,6 +1,6 @@
 import { api, ApiError } from '../api.js';
 import { platform } from '../platform.js';
-import { scanNative, scanWithCamera, scanFromFile, cameraAvailable } from '../qr.js';
+import { scanFromFile } from '../qr.js';
 import { esc, html, toast, withLoading, errorState } from '../ui.js';
 import { APP_NAME } from '../config.js';
 
@@ -12,20 +12,23 @@ import { APP_NAME } from '../config.js';
  * и лицевым счётом. Ни SMS, ни формы, ни пароля.
  */
 
-let cameraSession = null;
 
 /**
- * Где фотография важнее сканера мессенджера.
+ * Единственный путь — фотография квитанции.
  *
- * Внутри мессенджера — везде: его сканер чужой, чинить в нём нечего,
- * а фотография проходит через наш декодер и отдаёт байты. На айфоне —
- * даже вне мессенджера: там мини-приложение живёт во фрейме веб-версии,
- * и камера в нём зависит от политики родителя.
+ * ПОЧЕМУ ТОЛЬКО ОНА. Сканер мессенджера настроек не имеет вовсе — весь
+ * его контракт это `openCodeReader(fileSelect)`, — и на живых устройствах
+ * он не читает даже случайный QR с экрана. Вдобавок он отдаёт СТРОКУ,
+ * то есть выбирает кодировку за нас и на windows-1251 ошибается.
  *
- * Объявлено на уровне модуля, а не внутри отрисовки: тем же признаком
- * пользуются обработчики, а это другая функция и другая область видимости.
+ * Своя камера через `getUserMedia` требует ОТДЕЛЬНОГО разрешения нашей
+ * странице: пожилой человек, увидев внезапный системный запрос, жмёт
+ * «Запретить» — и второй раз браузер уже не спросит.
+ *
+ * Фотография не требует ни того, ни другого: снимок делает системная
+ * камера, а к нам приходят БАЙТЫ в полном разрешении, из которых мы
+ * сами читаем кодировку по заголовку кода.
  */
-const photoFirst = platform.inMax || platform.isIos;
 
 export function renderLogin(state) {
   const { config, error, name, addingAddress, attachTo, attachLabel } = state;
@@ -74,8 +77,6 @@ export function renderLogin(state) {
       </div>`;
   }
 
-  const canScanNative = platform.inMax;
-  const canScanCamera = cameraAvailable();
 
 
 
@@ -111,64 +112,24 @@ export function renderLogin(state) {
         </div>
       </div>
 
-      <div class="scanner" id="scannerBox" hidden>
-        <video id="scannerVideo" playsinline muted></video>
-        <canvas id="scannerCanvas" hidden></canvas>
-        <div class="scanner-frame"></div>
-        <button class="scanner-close" data-action="scan-torch" id="torchBtn"
-                style="right:auto;left:12px" aria-label="Подсветка" hidden>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 2h6l-1 7h4l-8 13 2-9H8l1-9z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
-        </button>
-        <button class="scanner-close" data-action="scan-stop" aria-label="Закрыть">
-          <svg width="16" height="16" viewBox="0 0 12 12" fill="none"><path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        </button>
-      </div>
 
       <div id="loginError">${error ? errorState(error) : ''}</div>
 
       <div id="scanActions">
-      ${photoFirst ? `
         <!--
-          Внутри мессенджера фотография идёт первой.
+          Одна кнопка, и это фотография.
 
-          ДВЕ ПРИЧИНЫ, И ОБЕ ПРОВЕРЕНЫ НА ЖИВЫХ УСТРОЙСТВАХ.
-
-          Первая: сканер мессенджера — чужой код. Он сам держит камеру,
-          сам наводит фокус и сам декодирует, а нам отдаёт готовую строку.
-          Когда он не читает квитанцию — а на Android это случается и с
-          бумажной, — сделать с этим нельзя ничего: ни подсказать фокус,
-          ни поднять разрешение, ни повторить попытку.
-
-          Вторая: он отдаёт СТРОКУ, то есть выбирает кодировку за нас
-          и на win-1251 ошибается. Фотография отдаёт БАЙТЫ, и кодировку
-          мы читаем из заголовка сами.
-
-          На айфоне добавляется третья: MAX убран из App Store 3 июня 2026,
-          мессенджер там живёт веб-версией, мини-приложение — iframe
-          с чужого origin, и камера в нём зависит от permissions policy
-          родителя. Фотография не зависит ни от чего.
-
-          Сканер мессенджера остаётся второй кнопкой: когда он срабатывает,
-          это по-прежнему самый быстрый путь.
+          Снимок делает системная камера: отдельного разрешения нашей
+          странице не нужно, а к нам приходят БАЙТЫ в полном разрешении —
+          кодировку по заголовку кода мы читаем сами. Живой сканер требовал
+          бы разрешения на камеру, а сканер мессенджера не настраивается
+          вовсе и на win-1251 ошибается.
         -->
-        <label class="btn-primary" style="cursor:pointer">
+        <label class="btn-primary" style="cursor:pointer;display:block;text-align:center">
           Сфотографировать квитанцию
           <input type="file" accept="image/*" id="qrFile" hidden>
         </label>
-        ${canScanNative || canScanCamera ? `
-          <button class="btn-primary secondary" data-action="scan" id="scanBtn">
-            Отсканировать сканером мессенджера
-          </button>` : ''}
-      ` : `
-        ${canScanNative || canScanCamera ? `
-          <button class="btn-primary" data-action="scan" id="scanBtn">
-            Отсканировать квитанцию
-          </button>` : ''}
-        <label class="btn-primary secondary" style="cursor:pointer">
-          Загрузить фото квитанции
-          <input type="file" accept="image/*" id="qrFile" hidden>
-        </label>
-      `}
+      </div>
 
       <div class="field-label" style="margin-top:26px">Где искать QR-код</div>
       <div class="dt-p" style="margin-top:0">
@@ -385,7 +346,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
    * пути кода нет специально: два способа получить файл разъехались бы
    * при первой же правке.
    */
-  function showPhotoFallback(message) {
+  function showPhotoFallback(message, title = 'Код прочитался неразборчиво') {
     const box = root.querySelector('#loginError');
     if (!box) return;
 
@@ -399,13 +360,12 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
      */
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
-        <div class="meter-name">Код прочитался неразборчиво</div>
+        <div class="meter-name">${esc(title)}</div>
         <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
           ${esc(message)}
-          ${photoFirst ? ' Нажмите «Сфотографировать квитанцию» ниже.' : ''}
+          Нажмите «Сфотографировать квитанцию» ниже — снимок отдаёт байты
+          в полном разрешении, и код читается там, где сканер сдаётся.
         </div>
-        ${photoFirst ? '' : html`
-          <button class="btn-primary" data-action="photo">Сфотографировать квитанцию</button>`}
       </div>`;
   }
 
@@ -640,103 +600,16 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
       </div>`;
   }
 
-  async function startScan(button) {
-    /**
-     * Внутри MAX сначала нативный сканер: он не спрашивает прав и работает
-     * там, где наш `getUserMedia` во фрейме мессенджера может быть закрыт
-     * политикой родителя — на айфоне это обычное дело.
-     *
-     * Но исход у него не двоичный, и каждый требует своих слов.
-     */
-    if (platform.inMax) {
-      const scan = await scanNative();
 
-      if (scan.status === 'ok') {
-        await submit(scan.value, button, { source: 'max' });
-        return;
-      }
-      if (scan.status === 'cancelled') {
-        /**
-         * «Отменил» и «не прочиталось» с той стороны неразличимы: сканер
-         * мессенджера в обоих случаях просто закрывается без значения.
-         * А второй случай встречается чаще, и человека в нём нельзя
-         * оставлять с одним словом «отменено» — ему нужен следующий шаг.
-         */
-        toast('Не прочиталось? Сфотографируйте квитанцию');
-        return;
-      }
-      // Сканера в клиенте нет или он упал — молча предлагаем фотографию
-      showPhotoFallback(
-        scan.status === 'unsupported'
-          ? 'Сканер этой версии мессенджера недоступен.'
-          : 'Сканер мессенджера не смог прочитать код.',
-      );
-      return;
-    }
 
-    const box = root.querySelector('#scannerBox');
-    box.hidden = false;
-    stopCamera();
 
-    cameraSession = await scanWithCamera({
-      video: root.querySelector('#scannerVideo'),
-      canvas: root.querySelector('#scannerCanvas'),
-      onResult: async (value) => {
-        box.hidden = true;
-        await submit(value, button, { source: 'camera' });
-      },
-      onError: (error) => {
-        box.hidden = true;
-        showError(error);
-      },
-    });
-
-    /**
-     * Кнопку подсветки показываем, только если она реально работает.
-     * На iOS браузер фонариком не управляет, и мёртвая кнопка хуже её отсутствия.
-     */
-    const torchBtn = root.querySelector('#torchBtn');
-    if (torchBtn) torchBtn.hidden = !cameraSession.torch(false);
-  }
-
-  function stopCamera() {
-    cameraSession?.stop();
-    cameraSession = null;
-  }
 
   const onClick = async (event) => {
     const target = event.target.closest('[data-action]');
     if (!target) return;
     const action = target.dataset.action;
 
-    if (action === 'scan') await startScan(target);
 
-    if (action === 'photo') {
-      /**
-       * `capture` просим только в момент нажатия и снимаем сразу после.
-       *
-       * С постоянным `capture="environment"` iOS показывает ТОЛЬКО камеру
-       * и убирает выбор из галереи — а фотографию квитанции человек часто
-       * уже снял раньше. Здесь мы знаем, что снять надо заново, поэтому
-       * камеру открываем явно.
-       */
-      const field = root.querySelector('#qrFile');
-      if (!field) return;
-      field.setAttribute('capture', 'environment');
-      field.click();
-      setTimeout(() => field.removeAttribute('capture'), 0);
-      return;
-    }
-    if (action === 'scan-torch') {
-      const on = target.dataset.on !== '1';
-      cameraSession?.torch(on);
-      target.dataset.on = on ? '1' : '0';
-      return;
-    }
-    if (action === 'scan-stop') {
-      stopCamera();
-      root.querySelector('#scannerBox').hidden = true;
-    }
     if (action === 'manual') {
       const value = root.querySelector('#qrManual')?.value.trim();
       if (!value) return toast('Вставьте строку QR');
@@ -876,7 +749,12 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
       const value = await scanFromFile(file);
       await submit(value, null, { source: 'photo' });
     } catch (error) {
-      showError(error);
+      /**
+       * «Не удалось загрузить» здесь неправда: снимок загрузился, кода
+       * на нём не нашлось. Человеку нужен совет, что сделать со снимком,
+       * а не сообщение о сбое.
+       */
+      showPhotoFallback(error.message, 'Код на фото не нашёлся');
     } finally {
       event.target.value = '';
     }
@@ -886,7 +764,6 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
   root.querySelector('#qrFile')?.addEventListener('change', onFile);
 
   return () => {
-    stopCamera();
     root.removeEventListener('click', onClick);
   };
 }
