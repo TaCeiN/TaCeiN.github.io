@@ -159,6 +159,13 @@ export const api = {
    * показывает «сервер недоступен» при живом сервере. Один раз уже стоило
    * рабочего дня. В теле запроса этой цены нет.
    */
+  /**
+   * `extra` может нести `address` (адрес из справочника, если в квитанции
+   * его не было) и `declaredPrivate` (человек сам сказал, что это частный
+   * дом, — оба поля собирает public/app/screens/login.js на экране выбора
+   * адреса). Оба уходят как есть, без разбора здесь: решение по ним
+   * принимает сервер, а не клиент.
+   */
   loginQr: (qr, extra) => request('POST', '/api/auth/qr', {
     qr,
     client: platform.clientTag ?? undefined,
@@ -331,6 +338,14 @@ export const api = {
   chairmanPolls: (houseKey) =>
     request('GET', `/api/chairman/polls?houseKey=${encodeURIComponent(houseKey)}`),
   chairmanCreatePoll: (payload) => request('POST', '/api/chairman/polls', payload),
+
+  /** Обращения дома в УК — читает и председатель, только не меняет статус. */
+  chairmanRequests: (houseKey) =>
+    request('GET', `/api/chairman/requests?houseKey=${encodeURIComponent(houseKey)}`),
+  chairmanRequest: (id, houseKey) =>
+    request('GET', `/api/chairman/requests/${id}?houseKey=${encodeURIComponent(houseKey)}`),
+  chairmanCommentRequest: (id, text, houseKey) =>
+    request('POST', `/api/chairman/requests/${id}/comment`, { text, houseKey }),
   readNotifications: (id) => request('POST', '/api/notifications/read', id ? { id } : {}),
   submitReading: (meterId, value, confirmed) =>
     request('POST', `/api/meters/${meterId}/readings`, { value, confirmed }),

@@ -193,6 +193,14 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
   let chosenStreet = null;
   /** Заявка, которую сейчас дозаполняет человек */
   let pendingBinding = null;
+  /**
+   * Нужен ли номер квартиры в форме «расскажите о себе».
+   *
+   * Приложение уже знает про объект: если у него нет квартиры (свой дом
+   * или квитанция без квартиры), спрашивать то же самое второй раз
+   * незачем — сервер отдаёт это полем `flat` вместе с заявкой.
+   */
+  let pendingNeedsFlat = true;
 
   async function submit(qr, button, extra) {
     if (!qr) return;
@@ -293,6 +301,8 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
     if (!box) return;
 
     pendingBinding = result.bindingId;
+    // Пустая строка — у объекта нет квартиры, второй раз не спрашиваем
+    pendingNeedsFlat = result.flat !== '';
 
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
@@ -308,8 +318,10 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
         <div class="field-label">Фамилия и имя</div>
         <input type="text" id="claimName" placeholder="Иванова Мария" autocomplete="name">
 
-        <div class="field-label">Номер квартиры</div>
-        <input type="text" id="claimFlat" placeholder="27" autocomplete="off">
+        ${pendingNeedsFlat ? html`
+          <div class="field-label">Номер квартиры</div>
+          <input type="text" id="claimFlat" placeholder="27" autocomplete="off">
+        ` : ''}
 
         <div class="field-label">Что передать председателю</div>
         <textarea id="claimNote" placeholder="Например: живу с 2019 года, квартира на пятом этаже"></textarea>
@@ -415,11 +427,21 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
           </div>
         </div>
 
-        <div class="field-label">Квартира</div>
-        <input type="text" id="addrFlat" placeholder="27" autocomplete="off">
+        <div class="field-label">Где вы живёте</div>
+        <div class="chips" id="addrKindChips">
+          <span class="chip sel" data-action="pick-addr-kind" data-v="flat">В квартире</span>
+          <span class="chip" data-action="pick-addr-kind" data-v="private">В своём доме</span>
+        </div>
+
+        <div id="addrFlatBlock">
+          <div class="field-label">Номер квартиры</div>
+          <input type="text" id="addrFlat" placeholder="27" autocomplete="off">
+        </div>
+        <div class="dt-p" id="addrPrivateNote" style="font-size:13px;color:var(--tx-2);margin-top:8px" hidden>
+          Хорошо, у своего дома квартиры не бывает — спрашивать не будем.
+        </div>
         <div class="dt-p" style="font-size:13px;color:var(--tx-2);margin-top:8px">
-          Частный дом — оставьте квартиру пустой. Букву и дробь пишите
-          прямо в номере дома: «15А», «4Б/1».
+          Букву и дробь пишите прямо в номере дома: «15А», «4Б/1».
         </div>
 
         <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
@@ -626,10 +648,36 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
       return;
     }
 
+    /**
+     * Выбор «квартира» / «свой дом».
+     *
+     * Своего переключателя режимов в приложении нет и не будет — это просто
+     * ответ на один вопрос анкеты, тот же приём, что и выбор категории
+     * обращения (см. requests.js, .chips/.chip.sel). Выбрал «свой дом» —
+     * поле номера квартиры прячется и не участвует в отправке: спрашивать
+     * то, чего у дома не бывает, незачем.
+     */
+    if (action === 'pick-addr-kind') {
+      root.querySelectorAll('#addrKindChips .chip').forEach((c) => c.classList.remove('sel'));
+      target.classList.add('sel');
+
+      const isPrivate = target.dataset.v === 'private';
+      const flatBlock = root.querySelector('#addrFlatBlock');
+      const note = root.querySelector('#addrPrivateNote');
+      if (flatBlock) flatBlock.hidden = isPrivate;
+      if (note) note.hidden = !isPrivate;
+      if (isPrivate) {
+        const flatInput = root.querySelector('#addrFlat');
+        if (flatInput) flatInput.value = '';
+      }
+      return;
+    }
+
     if (action === 'submit-address') {
       const errorBox = root.querySelector('#addrErr');
       const house = root.querySelector('#addrHouse')?.value.trim() ?? '';
-      const flat = root.querySelector('#addrFlat')?.value.trim() ?? '';
+      const isPrivate = root.querySelector('#addrKindChips .chip.sel')?.dataset.v === 'private';
+      const flat = isPrivate ? '' : (root.querySelector('#addrFlat')?.value.trim() ?? '');
 
       const complain = (text) => {
         if (errorBox) {
@@ -640,7 +688,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
 
       if (!chosenStreet) return complain('Выберите улицу из подсказки');
       if (!house) return complain('Укажите номер дома');
-      // Квартиру не требуем: у частного дома её нет
+      // Квартиру не требуем: у своего дома её нет
       errorBox?.classList.remove('show');
 
       await submit(lastQr, target, {
@@ -651,6 +699,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
           building: root.querySelector('#addrBuilding')?.value.trim() || undefined,
           flat: flat || undefined,
         },
+        declaredPrivate: isPrivate,
       });
       return;
     }
@@ -669,7 +718,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
       };
 
       if (name.length < 3) return complain('Укажите фамилию и имя');
-      if (!flat) return complain('Укажите номер квартиры');
+      if (pendingNeedsFlat && !flat) return complain('Укажите номер квартиры');
       error?.classList.remove('show');
 
       await withLoading(target, async () => {

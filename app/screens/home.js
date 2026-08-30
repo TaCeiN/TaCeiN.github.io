@@ -1,5 +1,6 @@
 import { api } from '../api.js';
 import { esc, html, money, formatDate, plural, loadingState, errorState, emptyState } from '../ui.js';
+import { wipBadge } from '../wip.js';
 
 /**
  * Главная жителя.
@@ -33,6 +34,20 @@ const SERVICES = [
   { cls: 'c6', route: 'emergency', label: 'Аварийные службы', icon: 'emergency' },
 ];
 
+/**
+ * Плитки по объекту, а не по всему списку.
+ *
+ * У частного дома «дома» как сообщества нет: соседей и опросов там
+ * не бывает по определению. Плитка вела бы на пустой раздел, который
+ * читается как поломка, поэтому убираем её, а не показываем пустой.
+ */
+function servicesFor(property) {
+  if (property?.houseManagement?.form === 'private') {
+    return SERVICES.filter((s) => s.route !== 'polls');
+  }
+  return SERVICES;
+}
+
 
 export function homeSkeleton() {
   return `<div class="page active" id="page-home">${loadingState('Собираем данные по вашему адресу…')}</div>`;
@@ -41,16 +56,25 @@ export function homeSkeleton() {
 /**
  * Вход в раздел «Совет дома».
  *
- * Появляется, только когда есть что разобрать: карточка с числом заявок,
+ * Появляется, только когда есть что разобрать: карточка с числом дел,
  * а не постоянный пункт меню. Это и есть замена второму профилю —
  * не режим, а обычный переход, из которого возвращаются кнопкой «Назад».
+ *
+ * ДВА ИСТОЧНИКА ДЕЛ, ОДНА КАРТОЧКА. Раньше карточка считала только заявки
+ * на доступ (`pendingClaims`), и у дома без УК, где все жильцы уже
+ * подтверждены, вход в раздел с главной пропадал совсем — а жалоба,
+ * которую председатель обязан прочитать, лежала непрочитанной: раздел
+ * оставался достижим только из профиля, куда пожилой человек не пойдёт
+ * искать то, о чём не знает.
  */
 function councilCard(state) {
   const council = state.chairman;
   if (!council?.isChairman) return '';
 
-  const waiting = council.houses.reduce((n, h) => n + h.pendingClaims, 0);
-  if (waiting === 0) return '';
+  const claims = council.houses.reduce((n, h) => n + h.pendingClaims, 0);
+  const requests = council.houses.reduce((n, h) => n + (h.awaitingRequests ?? 0), 0);
+  const total = claims + requests;
+  if (total === 0) return '';
 
   return html`
     <button class="alert" data-action="council">
@@ -60,7 +84,7 @@ function councilCard(state) {
       <div>
         <div class="t">Совет дома</div>
         <div class="d">
-          ${waiting} ${plural(waiting, 'заявка ждёт', 'заявки ждут', 'заявок ждут')} вашего решения
+          ${total} ${plural(total, 'дело ждёт', 'дела ждут', 'дел ждут')} вашего внимания
         </div>
       </div>
       <span class="chev"><svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
@@ -118,6 +142,8 @@ export async function renderHome(state) {
      * приложение больше не выполняет.
      */
     const hasChairman = waiting.deciders?.chairman;
+    // Не просто «организация известна» — у неё должен быть свой кабинет,
+    // куда мог бы зайти диспетчер и назначить председателя.
     const houseHasUk = waiting.deciders?.dispatcher;
 
     return html`
@@ -138,23 +164,43 @@ export async function renderHome(state) {
                   ? `У дома пока нет председателя, и подтвердить доступ
                      к соседям некому. Попросите управляющую компанию его
                      назначить — это делается один раз.`
-                  : `Дома пока нет в реестре управляющих организаций,
-                     поэтому подтвердить доступ к соседям некому.`}
+                  : `У дома пока нет ни председателя, ни доступного кабинета
+                     управляющей организации — подтвердить доступ к соседям
+                     некому.`}
         </div>
         ${waiting.addressRaw
           ? html`<div class="dt-p" style="font-size:13px">${esc(waiting.addressRaw)}</div>`
           : ''}
+        ${askOperatorBlock(waiting)}
         <button class="btn-primary secondary" data-action="check-access">Проверить</button>
       </div>
 
-      <div class="dt-card">
-        <div class="meter-name">Пожаловаться можно уже сейчас</div>
-        <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
-          Обращение уйдёт в управляющую компанию и останется в её архиве.
-          Удалить его она не может — только изменить статус.
-        </div>
-        <button class="btn-primary" data-action="complaint">Написать обращение</button>
-      </div>
+      ${/**
+         * Отклонённой заявке жаловаться НЕ ПО ЧЕМУ.
+         *
+         * Объект такого человека не приходит в `properties` — сервер
+         * отдаёт туда только подтверждённые и ожидающие, — поэтому
+         * выбранного объекта у приложения нет, и обращению некуда
+         * привязаться. Пока карточка показывалась и здесь, кнопка вела
+         * на открытую форму, а отправка падала технической ошибкой:
+         * человек читал непонятное сообщение вместо «принято».
+         *
+         * Что делать дальше, ему говорит причина отказа выше и поле
+         * кода приглашения ниже.
+         */
+        waiting.status === 'revoked' ? '' : html`
+        <div class="dt-card">
+          <div class="meter-name">Пожаловаться можно уже сейчас</div>
+          <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+            ${waiting.houseManagement?.orgName
+              ? html`Обращение уйдёт в управляющую компанию и останется
+                      в её архиве. Удалить его она не может — только
+                      изменить статус.`
+              : html`Обращение сохранится с датой и останется у вас — это
+                      работает, даже если адресата у дома пока нет.`}
+          </div>
+          <button class="btn-primary" data-action="complaint">Написать обращение</button>
+        </div>`}
 
       ${inviteCodeCard()}`;
   }
@@ -217,8 +263,9 @@ export async function renderHome(state) {
           ${waitingText(property)}
         </div>
         <div class="dt-p" style="font-size:14px;color:var(--tx-2)">
-          Начисления, счётчики, аналитика и обращение в управляющую компанию
-          по этой квартире работают уже сейчас.
+          ${property.houseManagement?.orgName
+            ? 'Начисления, счётчики, аналитика и обращение в управляющую компанию по этой квартире работают уже сейчас.'
+            : 'Начисления, счётчики, аналитика и обращение по этой квартире работают уже сейчас — запись сохранится, даже если адресата пока нет.'}
         </div>
       </div>` : ''}
 
@@ -290,11 +337,12 @@ export async function renderHome(state) {
 
     <div class="s-label"><h2>Услуги</h2></div>
     <div class="services">
-      ${SERVICES.map((s) => html`
+      ${servicesFor(property).map((s) => html`
         <button class="svc ${s.cls}" data-action="${s.route}">
           <span class="ic">
             <i class="svc-icon" style="--svc-icon:url('icons/services/${s.icon}.svg')"></i>
           </span>
+          ${wipBadge(s.route)}
           <span class="label">${esc(s.label)}</span>
         </button>`).join('')}
     </div>
@@ -397,11 +445,53 @@ export function waitingText(p) {
     return `Доступ к дому и соседям подтверждает председатель совета дома.
             Сканировать квитанцию заново не нужно — мы вас запомнили.`;
   }
+  // `dispatcher` здесь значит «у организации есть свой кабинет» —
+  // а не просто «организация известна» (см. decidersForHouse)
   if (p.deciders?.dispatcher) {
     return `У дома пока нет председателя, и подтвердить доступ к соседям
             некому. Попросите управляющую компанию его назначить —
             это делается один раз.`;
   }
-  return `Дома пока нет в реестре управляющих организаций, поэтому
-          подтвердить доступ к соседям некому.`;
+
+  /**
+   * У частного дома соседей нет по определению: дом и квартира — один
+   * и тот же объект, и раздел «Дом» у него не показывается вовсе.
+   * Обещать ему «доступ к соседям» значит обещать пустоту.
+   */
+  if (p.houseManagement?.form === 'private') {
+    return `Свои квитанции, счётчики и обращение работают уже сейчас —
+            подтверждения они не ждут.`;
+  }
+
+  return html`
+    У дома пока нет ни председателя, ни доступного кабинета управляющей
+    организации — подтвердить доступ к соседям некому.
+    ${askOperatorBlock(p, { indent: true })}`;
+}
+
+/**
+ * Приглашение подключить дом — одним куском на оба места, где оно нужно.
+ *
+ * Раньше разметка и объяснение были скопированы в карточке ожидания
+ * и здесь: два одинаковых блока, которые обязаны меняться синхронно,
+ * иначе тексты разъедутся.
+ *
+ * Дом без УК и без председателя — тупик, из которого сам житель выйти
+ * не может. Кнопка появляется, только когда просить больше некого:
+ * `canAskOperator` уже учитывает и председателя, и организацию,
+ * и частный дом.
+ */
+export function askOperatorBlock(p, { indent = false } = {}) {
+  if (!p.houseManagement?.canAskOperator) return '';
+
+  return html`
+    <div class="dt-p" style="font-size:14px;color:var(--tx-2)${indent ? ';margin-top:10px' : ''}">
+      За вашим домом не закреплена ни управляющая компания, ни
+      председатель. Расскажите о доме — мы подключим его вручную.
+      Это делается один раз.
+    </div>
+    <button class="btn-primary" ${indent ? 'style="margin-top:10px"' : ''}
+            data-action="ask-operator" data-id="${esc(p.propertyId)}">
+      Подключить дом
+    </button>`;
 }

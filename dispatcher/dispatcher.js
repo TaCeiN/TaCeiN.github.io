@@ -1,5 +1,6 @@
 import {
   esc, html, formatDate, toast, withLoading, loadingState, errorState, emptyState,
+  eventAuthor, eventRole,
 } from '../app/ui.js';
 import { slotText } from '../app/screens/requests.js';
 import {
@@ -285,7 +286,7 @@ function queueRow(r) {
    */
   const last = r.lastMessage;
   const sub = last
-    ? `${last.actor === 'resident' ? 'Житель' : 'УК'}: ${last.text}`
+    ? `${eventRole(last.actor)}: ${last.text}`
     : `${r.category} · ${r.authorName ?? 'житель'}`;
 
   return html`
@@ -639,13 +640,6 @@ function renderAccounts() {
       <h2>Объекты и их лицевые счета</h2>
       <div class="ha-list">${data.accounts.map(row).join('')}</div>
     </div>`;
-}
-
-/** Кто написал: роль плюс имя — на адресе бывает несколько жильцов. */
-function eventAuthor(e) {
-  if (e.actor === 'system') return 'Система';
-  const role = e.actor === 'dispatcher' ? 'Диспетчер' : 'Житель';
-  return e.actorName ? `${role} · ${e.actorName}` : role;
 }
 
 function actionLabel(to) {

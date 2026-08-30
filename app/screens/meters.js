@@ -1,20 +1,44 @@
 import { api } from '../api.js';
 import { platform } from '../platform.js';
 import {
-  esc, html, errorState, emptyState, toast, withLoading, plural,
+  esc, html, errorState, emptyState, toast, withLoading,
 } from '../ui.js';
 
 /**
  * Счётчики и аналитика потребления.
  *
- * Главное в этом экране — не форма, а предупреждения. Опечатка на порядок
- * (2214 вместо 221.4) стоит жителю десятки тысяч рублей, просроченная
- * поверка переводит начисление на норматив, а показания вне окна приёма
- * учтут только в следующем месяце. Всё это человек узнаёт из квитанции,
- * когда что-то менять уже поздно, — поэтому говорим заранее.
+ * ЭТО ДНЕВНИК, А НЕ ПЕРЕДАЧА ПОКАЗАНИЙ. Показания не уходят никуда:
+ * ни в управляющую компанию, ни в ресурсную организацию, ни в ГИС ЖКХ —
+ * доступа туда у приложения нет и не предвидится. Экран, который называл
+ * это «приёмом показаний», врал самым дорогим для жителя способом:
+ * человек считал, что передал, второй раз никуда не передавал и получал
+ * начисление по нормативу.
+ *
+ * Польза дневника настоящая и остаётся: опечатка на порядок (2214 вместо
+ * 221.4) стоит десятки тысяч рублей, просроченная поверка переводит
+ * начисление на норматив, а выросший расход выдаёт подтекающий бачок.
+ * Поэтому предупреждения здесь по-прежнему главнее формы.
  */
 
-/* ─────────────── передача показаний ─────────────── */
+/* ─────────────── запись показаний ─────────────── */
+
+/**
+ * Что этот раздел делает на самом деле.
+ *
+ * Стоит первой и постоянно, а не прячется в подсказку: это ответ
+ * на единственный вопрос, из-за которого экран мог стоить человеку денег.
+ */
+function journalNote() {
+  return html`
+    <div class="dt-card" style="margin-top:0;margin-bottom:14px">
+      <div class="meter-name">Это ваш дневник показаний</div>
+      <div class="dt-p" style="font-size:13px;color:var(--tx-2);margin-top:6px">
+        В управляющую компанию мы показания не передаём — передайте их сами,
+        как привыкли. Здесь они останутся с датами: чтобы не заводить тетрадь,
+        видеть расход и не ошибиться при вводе.
+      </div>
+    </div>`;
+}
 
 export async function renderMeters(state) {
   const property = state.currentProperty;
@@ -31,37 +55,37 @@ export async function renderMeters(state) {
 
   if (data.meters.length === 0) {
     return html`
+      ${journalNote()}
       <div class="state">
         <div class="state-title">Счётчиков пока нет</div>
         <div class="state-text">
           Заведите приборы учёта, которые стоят у вас в квартире, — после этого
-          можно передавать показания. Без них начисляют по нормативу,
-          а это почти всегда дороже фактического расхода.
+          можно записывать показания и видеть расход по месяцам.
         </div>
       </div>
       ${addMeterForm(data.kinds)}`;
   }
 
+  /**
+   * Полоса напоминает о ЧУЖОМ сроке.
+   *
+   * Зелёной точки «идёт приём» и обратного отсчёта здесь больше нет:
+   * своего приёма показаний у приложения не существует, а считать чужой
+   * срок, которого мы не знаем, — то же обещание, только мельче.
+   */
   return html`
-    <div class="win-note ${win.open ? 'open' : ''}">
-      <span class="win-dot"></span>
-      <div>
-        <div class="win-t">${esc(win.message)}</div>
-        ${win.open && win.daysLeft !== null ? html`
-          <div class="win-d">
-            Осталось ${win.daysLeft} ${plural(win.daysLeft, 'день', 'дня', 'дней')}
-          </div>` : ''}
+    ${journalNote()}
+
+    <div class="win-note">
+      <div class="win-t">
+        Большинство УК принимают показания с ${win.from} по ${win.to} число
       </div>
+      <div class="win-d">Точную дату смотрите в своей квитанции</div>
     </div>
 
     ${data.meters.map((m) => meterCard(m, data.period)).join('')}
 
     ${addMeterForm(data.kinds, data.meters)}
-
-    <div class="dt-p" style="color:var(--tx-2);font-size:13px">
-      Показания принимаются с ${win.from} по ${win.to} число.
-      Без них начисляют по нормативу — это почти всегда дороже фактического расхода.
-    </div>
   `;
 }
 
@@ -116,7 +140,7 @@ function meterCard(m, period) {
         <div class="meter-prev">
           ${m.previous !== null
             ? `было ${fmt(m.previous)} ${esc(m.unit)}`
-            : 'первая передача'}
+            : 'первая запись'}
         </div>
       </div>
 
@@ -128,7 +152,7 @@ function meterCard(m, period) {
       ${submitted ? html`
         <div class="meter-done">
           <svg viewBox="0 0 20 20" fill="none"><path d="M4.5 10.5L8.2 14.2L15.5 6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Показания за ${esc(periodName(period))} переданы
+          Записаны за ${esc(periodName(period))}
         </div>` : html`
         <div class="meter-input-row">
           <input type="text" inputmode="decimal" id="mv-${esc(m.id)}"
@@ -136,7 +160,7 @@ function meterCard(m, period) {
                  aria-label="${esc(m.label)}">
           <span class="meter-unit">${esc(m.unit)}</span>
           <button class="meter-send" data-action="send-reading" data-id="${esc(m.id)}">
-            Передать
+            Записать
           </button>
         </div>
         ${m.averageConsumption > 0 ? html`
@@ -313,7 +337,7 @@ export async function handleMeterAction(action, target, ctx) {
       const extra = result.warnings?.length
         ? ` ${result.warnings[0].message}`
         : '';
-      toast(`Принято. Расход ${fmt(result.consumption)}.${extra}`.trim());
+      toast(`Записано. Расход ${fmt(result.consumption)}.${extra}`.trim());
       await ctx.refresh();
     } catch (error) {
       /**
@@ -327,7 +351,7 @@ export async function handleMeterAction(action, target, ctx) {
         warn.innerHTML = html`
           ${esc(error.message)}
           <button class="warn-confirm" data-action="confirm-reading" data-id="${esc(id)}">
-            Всё верно, передать
+            Всё верно, записать
           </button>`;
         return;
       }

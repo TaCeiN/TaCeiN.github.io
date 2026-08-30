@@ -602,6 +602,7 @@ textarea.error, input.error{ border-color:var(--negative); }
   transition:color .15s ease;
 }
 .apptab.active{ color:var(--accent); }
+.apptab[hidden]{ display:none; }
 .apptab svg{ width:24px; height:24px; }
 .apptab .rd{
   position:absolute; top:1px; right:26px; width:9px; height:9px; border-radius:50%;
@@ -671,6 +672,7 @@ textarea.error, input.error{ border-color:var(--negative); }
 @media (max-width:360px){
   .page{ padding:14px 12px 20px; }
   .svc{ min-height:96px; padding:12px; }
+  .svc .wip{ top:10px; right:10px; }
   .pay-amt{ font-size:28px; }
   .dt-title, .success-h{ font-size:22px; }
   .code-box{ font-size:20px; letter-spacing:.12em; }
@@ -733,16 +735,13 @@ textarea.error, input.error{ border-color:var(--negative); }
   .star.on svg path{ fill-opacity:1; }
 
 /* ─────────────── окно приёма показаний ─────────────── */
+/* Полоса-напоминание о сроке УК. Точки состояния здесь больше нет:
+   зелёная означала «идёт наш приём показаний», а никакого нашего приёма
+   не существует — приложение показания только хранит */
 .win-note{
-  display:flex; align-items:flex-start; gap:11px;
   background:var(--bg-card); border-radius:var(--r-m);
   padding:14px; margin-bottom:14px;
 }
-.win-dot{
-  width:9px; height:9px; border-radius:50%; margin-top:5px;
-  background:var(--tx-3); flex-shrink:0;
-}
-.win-note.open .win-dot{ background:var(--positive); box-shadow:0 0 0 4px rgba(52,199,89,.18); }
 .win-t{ font-size:15px; font-weight:500; color:var(--tx); letter-spacing:-.014em; line-height:1.3; }
 .win-d{ font-size:13px; color:var(--tx-2); margin-top:3px; }
 
@@ -859,6 +858,31 @@ img.photo-ph{ object-fit:cover; }
   -webkit-mask-size: contain;
   mask-size: contain;
 }
+
+/* ---------- метка «В разработке» ---------- */
+/* Нейтральная, не тревожная. --attention и --negative означают «с вами
+   что-то не так», а эта метка — про нас, а не про жителя. Читается
+   словом, а не цветом: цвет здесь ничего не сообщает. */
+.wip{
+  display:inline-block;
+  padding:2px 7px; border-radius:var(--r-xs);
+  background:var(--fade); color:var(--tx-2);
+  font-size:11px; font-weight:500; line-height:1.35; white-space:nowrap;
+}
+
+/* На плитке услуги метка стоит в свободном верхнем правом углу: там
+   пусто, и она не сдвигает ни иконку, ни подпись, ни высоту плитки */
+.svc{ position:relative; }
+.svc .wip{ position:absolute; top:12px; right:12px; }
+
+.wip-note{
+  background:var(--fade-2); border-radius:var(--r-s);
+  padding:11px 12px; margin-bottom:12px;
+  font-size:13px; line-height:1.5; color:var(--tx-2);
+}
+/* Метка внутри строки идёт первым словом абзаца, поэтому выравнивается
+   по базовой линии текста, а не висит над ним */
+.wip-note .wip{ margin-right:6px; vertical-align:1px; }
 
 /* ---------- заставка при открытии ---------- */
 .splash{

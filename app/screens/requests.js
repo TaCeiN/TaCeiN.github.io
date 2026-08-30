@@ -1,8 +1,9 @@
 import { api } from '../api.js';
 import { platform } from '../platform.js';
 import {
-  esc, html, formatDate, loadingState, errorState, emptyState, toast, withLoading,
+  esc, html, formatDate, loadingState, errorState, emptyState, toast, withLoading, eventAuthor,
 } from '../ui.js';
+import { wipNote } from '../wip.js';
 
 /**
  * Заявки: список, деталка с историей, форма создания.
@@ -250,18 +251,6 @@ function statusTone(status) {
   return '';
 }
 
-/**
- * Кто написал реплику.
- *
- * Роли мало: на адресе может быть несколько жильцов, и «житель» без имени
- * не отвечает на вопрос «это писал я или мой домочадец».
- */
-function eventAuthor(e) {
-  if (e.actor === 'system') return 'Система';
-  const role = e.actor === 'dispatcher' ? 'Диспетчер' : 'Житель';
-  return e.actorName ? `${role} · ${e.actorName}` : role;
-}
-
 /** Окно приёма мастера: «21 августа, 13:00–18:00». */
 export function slotText(r) {
   if (!r.masterSlotStart) return '';
@@ -372,37 +361,63 @@ function fileSize(bytes) {
   return `${(size / 1024 / 1024).toFixed(1)} МБ`;
 }
 
+/**
+ * Кто увидит обращение — называем всех, а не только главного адресата.
+ *
+ * Право читать обращения дома и отвечать в переписке дано председателю
+ * ПО ВСЕМУ ДОМУ, включая дома с управляющей компанией, — а строка ниже
+ * раньше показывалась только при её отсутствии. Получалось зеркало той
+ * же неправды, которую эта же работа чинила: раньше приложение обещало
+ * доступ, которого не было, теперь есть доступ, о котором молчат. Человек
+ * пишет жалобу на соседа сверху, считая адресатом только УК, — а прочитает
+ * её ещё и совет дома, возможно, тот самый сосед.
+ */
+function addresseeLine(hm) {
+  if (!hm) return '';
+
+  if (hm.orgName && hm.hasChairman) {
+    return html`<div class="warn-line" style="margin-top:2px">
+        Обращение увидят управляющая компания «${esc(hm.orgName)}» и совет дома.
+      </div>`;
+  }
+  if (hm.hasChairman) {
+    return html`<div class="warn-line" style="margin-top:2px">
+        Обращение увидит совет дома: управляющей компании у вашего дома нет.
+      </div>`;
+  }
+  if (hm.orgName) {
+    // УК есть, председателя нет — тут и раньше было нечего добавить:
+    // единственный адресат ясен без отдельной строки
+    return '';
+  }
+  return html`<div class="warn-line" style="margin-top:2px">
+      Адресата пока нет — за домом никто не закреплён. Запись сохранится
+      с датой и никуда не денется: её увидит тот, кто возьмётся за дом.
+    </div>`;
+}
+
 export function renderComplaintForm(state, kind = 'complaint') {
   const property = state.currentProperty;
   const isMaster = kind === 'master';
 
   /**
-   * Дома нет в реестре управляющих организаций — принять заявку некому.
+   * Форма НЕ закрывается никогда.
    *
-   * Говорим об этом ДО формы. Раньше сервер отвечал 409 `no_managing_uk`
-   * только на «Отправить», и человек узнавал, что писать было некуда,
-   * уже описав протечку и выбрав окно для мастера.
+   * Раньше отсутствие УК закрывало её совсем, и ядро продукта — жалоба
+   * с датой, которую нельзя удалить, — было недоступно ровно тем домам,
+   * у которых нет управляющей компании: ТСЖ, непосредственное
+   * управление, частные дома. Доказательство нужно человеку и тогда,
+   * когда прочитать жалобу сегодня некому.
    */
-  if (!property?.ukName) {
-    return html`
-      <div class="warn-line bad" style="margin-top:2px">
-        Мы пока не знаем, какая компания обслуживает ваш дом — его нет
-        в загруженном реестре управляющих организаций. Заявку принять
-        некому, поэтому форма закрыта.
-      </div>
-      <div class="dt-p" style="color:var(--tx-2);font-size:13px">
-        Управляющая организация берётся из реестра лицензий, а не из
-        квитанции: там напечатан получатель платежа, а это другое лицо.
-        Остальные разделы работают как обычно.
-      </div>
-      <div class="dt-p" style="color:var(--tx-2);font-size:13px">
-        Если у дома есть управляющая компания, она подключится к сервису
-        и заберёт дом — тогда заявки заработают сами, повторять ничего
-        не придётся.
-      </div>`;
-  }
+  const addressee = addresseeLine(property?.houseManagement);
 
+  /**
+   * Порядок строк: сначала «что это за функция сегодня», потом «кто увидит
+   * ваше обращение». Второе бессмысленно читать раньше первого.
+   */
   return html`
+    ${isMaster ? wipNote('master') : ''}
+    ${addressee}
     <div class="field-label" style="margin-top:2px">Категория</div>
     <div class="chips" id="catChips">
       ${CATEGORIES.map((c, i) => html`
@@ -427,8 +442,8 @@ export function renderComplaintForm(state, kind = 'complaint') {
         `).join('')}
       </div>
       <div class="dt-p" style="font-size:13px;color:var(--tx-2);margin-top:10px">
-        Окно не обязательно, но с ним диспетчер не будет звонить и уточнять.
-        Точное время мастер подтвердит в заявке.
+        Окно не обязательно — это пожелание, которое диспетчер увидит вместе
+        с заявкой. Точное время он согласует с вами сам, вне приложения.
       </div>
     ` : ''}
 
@@ -468,7 +483,31 @@ function hoursWord(n) {
   return 'часов';
 }
 
-export function renderSuccess({ number, slaHours }) {
+/**
+ * Что сказать о судьбе обращения — та же цепочка «кто увидит», что решает
+ * строку адресата на форме (addresseeLine), только в прошедшем времени
+ * и с обещанием, которое приложение способно сдержать.
+ *
+ * Раньше текст был один на все три случая: «диспетчер увидит сразу, статус
+ * придёт уведомлением» — сразу после формы, которая честно говорила
+ * «адресата пока нет». У дома без организации диспетчера не существует,
+ * статус не поменяет никто, и уведомление никогда не придёт.
+ */
+function successText(hm, slaHours, word) {
+  if (hm?.orgName) {
+    return `Диспетчер увидит заявку сразу. Срок реакции по этой категории —
+            ${slaHours} ${word}. Статус придёт уведомлением.`;
+  }
+  if (hm?.hasChairman) {
+    return `Обращение увидит совет дома. Управляющей компании у вашего
+            дома нет, поэтому статус менять некому — но запись останется
+            с датой и никуда не денется.`;
+  }
+  return `За вашим домом пока никто не закреплён, но обращение сохранено
+          с датой — его увидит тот, кто возьмётся за дом.`;
+}
+
+export function renderSuccess({ number, slaHours, houseManagement }) {
   const word = hoursWord(slaHours);
   return html`
     <div class="success-wrap">
@@ -477,8 +516,7 @@ export function renderSuccess({ number, slaHours }) {
       </div>
       <div class="success-h">Обращение принято</div>
       <div class="success-p">
-        Диспетчер увидит заявку сразу. Срок реакции по этой категории —
-        ${slaHours} ${word}. Статус придёт уведомлением.
+        ${successText(houseManagement, slaHours, word)}
       </div>
       <div class="success-num">№ ${esc(number)}</div>
       <button class="btn-primary" style="max-width:260px" data-action="requests">
@@ -569,12 +607,26 @@ export async function handleRequestAction(action, target, ctx) {
       desc.classList.remove('error');
       err?.classList.remove('show');
 
+      /**
+       * Обращение принадлежит квартире, и без неё отправлять нечего.
+       *
+       * Состояние достижимо: у человека с отклонённой заявкой объекта
+       * в профиле нет вовсе. Раньше здесь читалось `.propertyId`
+       * у пустого значения, исключение перехватывалось общим catch,
+       * и человек видел техническое сообщение вместо понятного отказа.
+       */
+      const propertyId = ctx.state.currentProperty?.propertyId;
+      if (!propertyId) {
+        toast('Сначала добавьте свой адрес — обращение подаётся по квартире');
+        return true;
+      }
+
       await withLoading(target, async () => {
         try {
           const category = document.querySelector('#catChips .chip.sel')?.dataset.v ?? 'Другое';
           const slot = document.querySelector('#slotChips .chip.sel')?.dataset;
           const result = await api.createRequest({
-            propertyId: ctx.state.currentProperty.propertyId,
+            propertyId,
             kind: target.dataset.kind,
             category,
             description: text,
@@ -602,7 +654,15 @@ export async function handleRequestAction(action, target, ctx) {
           platform.haptic('medium');
           platform.guardClosing(false);
           if (failed.length) toast(`Не удалось приложить — ${failed[0]}`);
-          await ctx.show('request-success', result);
+          /**
+           * `houseManagement` — с формы, не из ответа сервера: экран успеха
+           * обязан сказать правду о том, кто на самом деле увидит заявку,
+           * а не безусловно обещать диспетчера, которого может не быть.
+           */
+          await ctx.show('request-success', {
+            ...result,
+            houseManagement: ctx.state.currentProperty?.houseManagement,
+          });
         } catch (error) {
           toast(error.message);
         }

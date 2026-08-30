@@ -20,7 +20,8 @@ import {
   renderPrivacy, renderNotifySettings, handleProfileAction,
 } from './screens/profile.js';
 import {
-  renderCouncil, renderCouncilHouse, handleCouncilAction,
+  renderCouncil, renderCouncilHouse, renderCouncilRequests, renderCouncilRequestDetail,
+  handleCouncilAction,
 } from './screens/council.js';
 import {
   renderCouncilPosts, renderCouncilPostForm, handleCouncilPostsAction,
@@ -71,6 +72,8 @@ const TITLES = {
   profile: ['Профиль', false],
   council: ['Совет дома', false],
   'council-house': ['Квартиры дома', false],
+  'council-requests': ['Обращения дома', false],
+  'council-request': ['Обращение', false],
   'council-posts': ['Объявления совета', false],
   'council-post-new': ['Новое объявление', false],
   'council-polls': ['Опросы дома', false],
@@ -175,6 +178,20 @@ async function renderScreen(name, params = {}) {
   const put = (content) => setHtml(host, heading + content);
 
   try {
+    /**
+     * Раздел «Дом» не существует для частного дома.
+     *
+     * Прямой переход сюда возможен только в обход вкладки (например
+     * старая закладка или уведомление): вкладка уже скрыта в `syncTabs`.
+     * Показывать раздел пустым нельзя — «дома» как сообщества у частного
+     * дома нет по определению, — поэтому просто возвращаемся на главную.
+     */
+    if (HOUSE_SECTION_SCREENS.has(name)
+      && state.currentProperty?.houseManagement?.form === 'private') {
+      await reset('home');
+      return;
+    }
+
     switch (name) {
       case 'home':
         put(homeSkeleton());
@@ -188,6 +205,12 @@ async function renderScreen(name, params = {}) {
         break;
       case 'council-house':
         put(await renderCouncilHouse(state));
+        break;
+      case 'council-requests':
+        put(await renderCouncilRequests(state));
+        break;
+      case 'council-request':
+        put(await renderCouncilRequestDetail(params.id, state));
         break;
       case 'council-posts':
         put(await renderCouncilPosts(state));
@@ -311,7 +334,20 @@ function syncTabs(name) {
   document.querySelectorAll('.apptab').forEach((tab) => {
     tab.classList.toggle('active', tab.dataset.tab === active);
   });
+
+  /**
+   * У частного дома «дома» как сообщества не существует.
+   *
+   * Вкладка вела бы на раздел, которого нет по определению — соседей,
+   * ленты и опросов у одного дома без общего имущества не бывает.
+   * Прячем вкладку целиком, а не показываем её пустой.
+   */
+  const feedTab = document.querySelector('.apptab[data-tab="feed"]');
+  if (feedTab) feedTab.hidden = state.currentProperty?.houseManagement?.form === 'private';
 }
+
+/** Экраны раздела «Дом»: недоступны частному дому — см. syncTabs выше. */
+const HOUSE_SECTION_SCREENS = new Set(['feed', 'market', 'post', 'new-post', 'polls', 'poll']);
 
 /* ─────────────── действия ─────────────── */
 
@@ -394,6 +430,30 @@ async function handleAction(action, target) {
         toast(error.message);
       }
       return;
+
+    /**
+     * Просьба подключить дом, за которым никто не стоит.
+     *
+     * Идентификатор квартиры берём из кнопки, а не из `state.currentProperty`:
+     * кнопка появляется и на экране ожидания, где текущего объекта ещё нет
+     * вовсе, — только заявка, к которой она относится.
+     */
+    case 'ask-operator': {
+      const propertyId = target.dataset.id || state.currentProperty?.propertyId;
+      await withLoading(target, async () => {
+        try {
+          const res = await api.post('/api/house/claim', { propertyId });
+          toast(res?.created
+            ? 'Заявка принята — мы подключим ваш дом'
+            : 'Заявка уже принята, ждём');
+          state.me = await api.me();
+          await refresh();
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+      return;
+    }
 
     /** Проверка, подтвердил ли собственник доступ. Сессия уже своя. */
     case 'check-access':
