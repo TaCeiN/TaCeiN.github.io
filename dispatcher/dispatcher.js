@@ -1,8 +1,9 @@
 import {
-  esc, html, formatDate, toast, withLoading, loadingState, errorState, emptyState,
+  esc, html, formatDate, formatDay, toast, withLoading, loadingState, errorState, emptyState,
   eventAuthor, eventRole,
 } from '../app/ui.js';
 import { slotText } from '../app/screens/requests.js';
+import { handleDateAction } from '../app/datepicker.js';
 import {
   postForm, readPostForm, postList, pollForm, readPollForm, pollList,
 } from '../app/house-admin.js';
@@ -102,17 +103,25 @@ const api = {
   login: (login, password) => request('POST', '/api/dispatcher/login', { login, password }),
   logout: () => request('POST', '/api/dispatcher/logout', {}),
   me: () => request('GET', '/api/dispatcher/me'),
-  requests: (status) => request(
-    'GET',
-    status ? `/api/dispatcher/requests?status=${encodeURIComponent(status)}` : '/api/dispatcher/requests',
-  ),
+  requests: ({ status, flag, q, limit } = {}) => {
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    if (flag) params.set('flag', flag);
+    if (q) params.set('q', q);
+    if (limit) params.set('limit', String(limit));
+    const tail = params.toString();
+    return request('GET', tail ? `/api/dispatcher/requests?${tail}` : '/api/dispatcher/requests');
+  },
   request: (id) => request('GET', `/api/dispatcher/requests/${id}`),
   setStatus: (id, payload) => request('POST', `/api/dispatcher/requests/${id}/status`, payload),
 
   accounts: () => request('GET', '/api/dispatcher/accounts'),
   houses: () => request('GET', '/api/dispatcher/houses'),
   addHouse: (address) => request('POST', '/api/dispatcher/houses', { address }),
-  posts: () => request('GET', '/api/dispatcher/posts'),
+  posts: (limit) => request(
+    'GET',
+    limit ? `/api/dispatcher/posts?limit=${encodeURIComponent(limit)}` : '/api/dispatcher/posts',
+  ),
   createPost: (payload) => request('POST', '/api/dispatcher/posts', payload),
   removePost: (id) => request('DELETE', `/api/dispatcher/posts/${id}`),
   polls: () => request('GET', '/api/dispatcher/polls'),
@@ -131,10 +140,18 @@ const api = {
 
 /* ─────────────── состояние ─────────────── */
 
+/** Столько строк очереди добавляет одно нажатие «Показать ещё». */
+const QUEUE_STEP = 50;
+
 const state = {
   me: null,
   tab: 'requests',
   filter: null,
+  /** Что назвали в трубку: номер, адрес или квартира */
+  query: '',
+  queueShown: QUEUE_STEP,
+  postsShown: QUEUE_STEP,
+  postsTotal: 0,
   data: null,
   openId: null,
   open: null,
@@ -259,7 +276,18 @@ function renderQueue() {
       <div class="l">${esc(label)}</div>
     </button>`;
 
+  const total = state.data.total ?? requests.length;
+
   return renderTabs() + html`
+    <div class="dsp-search">
+      <input type="search" id="dspQ" value="${esc(state.query)}"
+             placeholder="Номер, адрес или квартира">
+      <button class="dsp-act primary" data-action="search">Найти</button>
+      ${state.query
+        ? '<button class="dsp-act" data-action="search-reset">Сбросить</button>'
+        : ''}
+    </div>
+
     <div class="dsp-counters">
       ${counter(null, 'Все заявки', counters.total, false)}
       ${counter('new', 'Новые', counters.new, false)}
@@ -270,8 +298,19 @@ function renderQueue() {
     </div>
 
     ${requests.length === 0
-      ? '<div class="dsp-empty">В этой выборке заявок нет</div>'
-      : `<div class="dsp-queue">${requests.map(queueRow).join('')}</div>`}`;
+      ? html`<div class="dsp-empty">
+          ${state.query
+            ? `По запросу «${esc(state.query)}» ничего не нашлось.
+               Номер, адрес или квартира — можно часть.`
+            : 'В этой выборке заявок нет'}
+        </div>`
+      : html`
+        <div class="dsp-queue">${requests.map(queueRow).join('')}</div>
+        ${total > requests.length ? html`
+          <div class="dsp-more">
+            <span class="dsp-dim">Показаны ${requests.length} из ${total}</span>
+            <button class="dsp-mini" data-action="queue-more">Показать ещё</button>
+          </div>` : ''}`}`;
 }
 
 function queueRow(r) {
@@ -292,7 +331,17 @@ function queueRow(r) {
   return html`
     <button class="dsp-row ${overdue ? 'overdue' : ''} ${r.awaitingUk ? 'answered' : ''}"
             data-action="open" data-id="${esc(r.id)}">
-      <span class="num">№ ${esc(r.number)}</span>
+      <span class="num">
+        № ${esc(r.number)}
+        <!--
+          Дата подачи рядом с номером: очередь отсортирована по времени,
+          а времени в строке не было. «Просрочено на 22 дня» отвечает
+          на вопрос про срок, но не на вопрос «когда это к нам пришло»,
+          и в архиве за год отличить прошлогоднюю заявку от вчерашней
+          было нельзя вовсе.
+        -->
+        <span class="dsp-when">${esc(formatDay(r.createdAt))}</span>
+      </span>
       <span>
         <span class="ttl">
           ${r.awaitingUk ? '<span class="dsp-flag">ответ жителя</span>' : ''}${esc(r.title)}
@@ -418,7 +467,8 @@ function renderDetail(r) {
  * можно было только curl-ом, то есть на практике никак.
  */
 function renderPosts() {
-  return renderTabs() + postForm({ houses: state.houseOptions }) + postList(state.posts);
+  return renderTabs() + postForm({ houses: state.houseOptions })
+    + postList(state.posts, state.postsTotal, 'posts-more');
 }
 
 function renderPolls() {
@@ -688,18 +738,21 @@ function capitalise(value) {
 async function loadQueue() {
   main().innerHTML = loadingState('Загружаем очередь…');
   try {
-    // «Просрочено» — не статус, а признак: фильтруем на клиенте
-    const derived = state.filter === '__overdue' || state.filter === '__awaiting';
-    const serverFilter = derived ? null : state.filter;
-    const data = await api.requests(serverFilter);
+    /**
+     * «Просрочено» и «Житель ответил» — признаки, а не статусы, и теперь
+     * их отбирает сервер. Раньше это делал кабинет у себя, но с потолком
+     * выдачи просроченные заявки могут целиком оказаться за пределами
+     * первых пятидесяти строк.
+     */
+    const flag = state.filter === '__overdue' ? 'overdue'
+      : state.filter === '__awaiting' ? 'awaiting' : undefined;
 
-    if (state.filter === '__overdue') {
-      data.requests = data.requests.filter((r) => r.sla === 'overdue');
-    }
-    if (state.filter === '__awaiting') {
-      data.requests = data.requests.filter((r) => r.awaitingUk);
-    }
-    state.data = data;
+    state.data = await api.requests({
+      status: flag ? undefined : state.filter ?? undefined,
+      flag,
+      q: state.query || undefined,
+      limit: state.queueShown,
+    });
     main().innerHTML = renderQueue();
   } catch (error) {
     if (error.status === 401) return showLogin('Сессия истекла, войдите заново');
@@ -810,7 +863,9 @@ async function loadSection() {
     }
     if (state.tab === 'posts') {
       await loadHouses();
-      state.posts = (await api.posts()).posts;
+      const loaded = await api.posts(state.postsShown);
+      state.posts = loaded.posts;
+      state.postsTotal = loaded.total ?? loaded.posts.length;
       main().innerHTML = renderPosts();
       return;
     }
@@ -883,6 +938,9 @@ async function boot() {
 /* ─────────────── действия ─────────────── */
 
 async function handleAction(action, target) {
+  // Календарь общий с приложением жителя: одно окно выбора даты на все кабинеты
+  if (await handleDateAction(action, target)) return;
+
   switch (action) {
     case 'do-login': {
       const login = document.querySelector('#dspLogin')?.value.trim() ?? '';
@@ -910,7 +968,36 @@ async function handleAction(action, target) {
     case 'filter':
       state.filter = target.dataset.v || null;
       state.openId = null;
+      // Другая выборка — счёт показанного начинается заново
+      state.queueShown = QUEUE_STEP;
       return loadQueue();
+
+    case 'search':
+      state.query = document.querySelector('#dspQ')?.value.trim() ?? '';
+      state.queueShown = QUEUE_STEP;
+      return loadQueue();
+
+    case 'search-reset':
+      state.query = '';
+      state.queueShown = QUEUE_STEP;
+      return loadQueue();
+
+    case 'posts-more': {
+      const keep = window.scrollY;
+      state.postsShown += QUEUE_STEP;
+      await loadSection();
+      window.scrollTo({ top: keep });
+      return;
+    }
+
+    case 'queue-more': {
+      // Очередь читается сверху вниз, поэтому место прокрутки бережём
+      const keep = window.scrollY;
+      state.queueShown += QUEUE_STEP;
+      await loadQueue();
+      window.scrollTo({ top: keep });
+      return;
+    }
 
     case 'open':
       return openRequest(target.dataset.id);

@@ -1,9 +1,11 @@
 import { api } from '../api.js';
 import { platform } from '../platform.js';
 import {
-  esc, html, formatDate, loadingState, errorState, emptyState, toast, withLoading, eventAuthor,
+  esc, html, formatDate, formatDay, loadingState, errorState, emptyState, toast, withLoading,
+  eventAuthor, moreLine, keepScroll,
 } from '../ui.js';
 import { wipNote } from '../wip.js';
+import { dateField } from '../datepicker.js';
 
 /**
  * Заявки: список, деталка с историей, форма создания.
@@ -23,17 +25,28 @@ export function requestsSkeleton() {
   return `<div class="page active" id="page-requests">${loadingState('Загружаем обращения…')}</div>`;
 }
 
+/**
+ * Сколько строк архива показано сейчас.
+ *
+ * Активные потолка не знают — их единицы. Архив за год дорастает
+ * до шести десятков строк, и его же листают в поисках прошлогодней
+ * жалобы, поэтому режется именно он.
+ */
+const ARCHIVE_STEP = 50;
+let archiveShown = ARCHIVE_STEP;
+
 export async function renderRequests(state) {
   let data;
   try {
     // Обращения принадлежат квартире — показываем только активную
-    data = await api.requests(state?.currentProperty?.propertyId);
+    data = await api.requests(state?.currentProperty?.propertyId, archiveShown);
   } catch (error) {
     return errorState(error, 'requests');
   }
 
   const tab = window.__reqTab ?? 'active';
   const list = tab === 'active' ? data.active : data.archive;
+  const archiveTotal = data.archiveTotal ?? data.archive.length;
 
   return html`
     <div class="tabs" style="padding:0 0 12px">
@@ -41,12 +54,15 @@ export async function renderRequests(state) {
         Активные · ${data.active.length}
       </span>
       <span class="tab ${tab === 'archive' ? 'on' : ''}" data-action="req-tab" data-tab="archive">
-        Архив · ${data.archive.length}
+        Архив · ${archiveTotal}
       </span>
     </div>
 
     ${list.length
       ? `<div class="list">${list.map(row).join('')}</div>`
+        + (tab === 'archive'
+          ? moreLine({ shown: list.length, total: archiveTotal, action: 'req-more' })
+          : '')
       : emptyState(
           tab === 'active' ? 'Активных обращений нет' : 'Архив пуст',
           tab === 'active'
@@ -65,11 +81,18 @@ function row(r) {
   /**
    * «Нужны уточнения» в списке выглядел ровно как «в работе», и заявка
    * молча стояла: житель не знал, что ход за ним. Поэтому вторая строка
-   * говорит прямо, что от него ждут ответа.
+   * говорит прямо, что от него ждут ответа, и дату вытесняет: когда ход
+   * за человеком, это важнее календаря.
+   *
+   * В остальных строках дата обязательна. Список отсортирован по времени,
+   * а времени в нём не было: за год архив дорастает до шести десятков
+   * строк, и вопрос «когда я жаловался на лифт» решался только
+   * открыванием карточек по одной. Номер не помогает — нумерация сквозная
+   * по управляющей организации, и соседние строки идут вразнобой.
    */
   const sub = r.awaitingResident
     ? 'Диспетчер ждёт вашего ответа'
-    : `№ ${esc(r.number)} · ${esc(r.category)}`;
+    : `№ ${esc(r.number)} · ${esc(r.category)} · ${esc(formatDay(r.createdAt))}`;
 
   return html`
     <button class="wrow tappable" data-action="request" data-id="${esc(r.id)}">
@@ -313,40 +336,46 @@ const starSvg = () =>
 /* ─────────────── форма создания ─────────────── */
 
 /**
- * Окна приёма мастера на ближайшие дни.
+ * Окна приёма мастера.
  *
- * Раньше здесь была пустая полоса под заголовком «Когда удобно принять
- * мастера»: поля в базе и в API есть, а выбрать было нечего. Житель
- * оставался без ответа на главный для него вопрос — когда сидеть дома.
- *
- * Окна крупные и с запасом: обещать «мастер в 14:20» УК не может, а
- * промах по обещанию хуже широкого окна.
+ * Раньше здесь были готовые пары «день + окно» на три ближайших дня,
+ * и дальше послезавтра позвать мастера было нельзя — а люди уезжают,
+ * работают в смену и планируют неделями. Теперь день выбирается
+ * календарём, а окно остаётся списком: обещать «мастер в 14:20» УК
+ * не может, и промах по обещанию хуже широкого окна.
  */
-function masterSlots(now = new Date()) {
-  const WINDOWS = [
-    { fromHour: 9, toHour: 13, label: '9:00–13:00' },
-    { fromHour: 13, toHour: 18, label: '13:00–18:00' },
-    { fromHour: 18, toHour: 21, label: '18:00–21:00' },
-  ];
-  const DAYS = ['сегодня', 'завтра', 'послезавтра'];
+const MASTER_WINDOWS = [
+  { from: 9, to: 13, label: '9:00–13:00' },
+  { from: 13, to: 18, label: '13:00–18:00' },
+  { from: 18, to: 21, label: '18:00–21:00' },
+];
 
-  const slots = [];
-  for (const [offset, dayLabel] of DAYS.entries()) {
-    for (const w of WINDOWS) {
-      const start = new Date(now);
-      start.setDate(start.getDate() + offset);
-      start.setHours(w.fromHour, 0, 0, 0);
-      const end = new Date(start);
-      end.setHours(w.toHour, 0, 0, 0);
-
-      // Окно, которое уже началось, предлагать нечестно
-      if (start.getTime() <= now.getTime()) continue;
-      slots.push({ start, end, label: `${dayLabel} ${w.label}` });
-    }
-  }
-  return slots.slice(0, 6);
+/** Завтра — разумное умолчание: сегодняшние окна чаще всего уже прошли */
+function tomorrow(now = new Date()) {
+  const d = new Date(now);
+  d.setDate(d.getDate() + 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function today(now = new Date()) {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * День и окно → две отметки времени для заявки.
+ *
+ * Возвращает пустое, если день не выбран: окно приёма необязательно,
+ * и заявка без него — обычное дело.
+ */
+export function masterSlotFrom(day, windowIndex) {
+  const w = MASTER_WINDOWS[Number(windowIndex)];
+  if (!day || !w) return {};
+  const [y, m, d] = day.split('-').map(Number);
+  return {
+    slotStart: new Date(y, m - 1, d, w.from, 0, 0, 0).toISOString(),
+    slotEnd: new Date(y, m - 1, d, w.to, 0, 0, 0).toISOString(),
+  };
+}
 
 /**
  * Размер файла человеческими словами.
@@ -434,11 +463,15 @@ export function renderComplaintForm(state, kind = 'complaint') {
 
     ${isMaster ? html`
       <div class="field-label">Когда удобно принять мастера</div>
-      <div class="chips" id="slotChips">
-        ${masterSlots().map((s) => html`
-          <span class="chip" data-action="pick-slot"
-                data-start="${esc(s.start.toISOString())}"
-                data-end="${esc(s.end.toISOString())}">${esc(s.label)}</span>
+      ${dateField({
+        id: 'masterDay',
+        value: tomorrow(),
+        placeholder: 'Выберите день',
+        min: today(),
+      })}
+      <div class="chips" id="slotChips" style="margin-top:10px">
+        ${MASTER_WINDOWS.map((w, i) => html`
+          <span class="chip" data-action="pick-slot" data-w="${i}">${esc(w.label)}</span>
         `).join('')}
       </div>
       <div class="dt-p" style="font-size:13px;color:var(--tx-2);margin-top:10px">
@@ -448,7 +481,9 @@ export function renderComplaintForm(state, kind = 'complaint') {
     ` : ''}
 
     <div class="field-label">Фотографии и документы</div>
-    <label class="btn-primary secondary" style="cursor:pointer;display:block;text-align:center">
+    <!-- Без display:block: он сбивал центрирование от .btn-primary (та
+         выравнивает флексом), и надпись прижималась к верху кнопки -->
+    <label class="btn-primary secondary" style="cursor:pointer">
       Прикрепить файл
       <input type="file" id="reqFiles" hidden multiple
              accept="image/*,application/pdf" data-action="pick-files">
@@ -530,7 +565,15 @@ export async function handleRequestAction(action, target, ctx) {
   switch (action) {
     case 'req-tab':
       window.__reqTab = target.dataset.tab;
+      // Смена вкладки — это новый взгляд на список: показанное считаем заново
+      archiveShown = ARCHIVE_STEP;
       await ctx.show('requests');
+      return true;
+
+    case 'req-more':
+      archiveShown += ARCHIVE_STEP;
+      // refresh, а не show: «Показать ещё» не должно добавлять шаг «назад»
+      await keepScroll(() => ctx.refresh());
       return true;
 
     case 'pick-cat':
@@ -624,14 +667,16 @@ export async function handleRequestAction(action, target, ctx) {
       await withLoading(target, async () => {
         try {
           const category = document.querySelector('#catChips .chip.sel')?.dataset.v ?? 'Другое';
-          const slot = document.querySelector('#slotChips .chip.sel')?.dataset;
+          const day = document.querySelector('#masterDay')?.value ?? '';
+          const windowIndex = document.querySelector('#slotChips .chip.sel')?.dataset.w;
+          const slot = masterSlotFrom(day, windowIndex);
           const result = await api.createRequest({
             propertyId,
             kind: target.dataset.kind,
             category,
             description: text,
-            slotStart: slot?.start,
-            slotEnd: slot?.end,
+            slotStart: slot.slotStart,
+            slotEnd: slot.slotEnd,
           });
           /**
            * Файлы уходят ПОСЛЕ создания обращения: у вложения должен быть

@@ -320,8 +320,21 @@ export async function renderHome(state) {
       </span>
       <div>
         <div class="t">Добавить квитанцию</div>
-        <div class="d">Свет, газ, вода — за эту же квартиру, адрес не спросим</div>
+        <!--
+          Подпись короче прежней («…, адрес не спросим») намеренно:
+          рядом стоят иллюстрация и стрелка, и на полную фразу остаётся
+          колонка, в которой она рвётся на неровные строки. «За эту же
+          квартиру» и означает, что адрес спрашивать не будут.
+        -->
+        <div class="d">Свет, газ, вода — за эту же квартиру</div>
       </div>
+      <!--
+        Иллюстрация из макета, а не своя рисовка: подогнана под экран
+        (240px вместо 1280px — 43 КБ против 841 КБ) и лежит в public/icons/art.
+        Украшение, поэтому скрыта от чтения с экрана и уступает место словам
+        на узком экране.
+      -->
+      <img class="receipt-art" src="icons/art/receipt-stack.png" alt="" aria-hidden="true">
       <span class="chev"><svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
     </button>
 

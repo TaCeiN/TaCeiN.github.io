@@ -2,7 +2,7 @@ import { api, ApiError } from '../api.js';
 import { platform } from '../platform.js';
 import { scanFromFile } from '../qr.js';
 import { esc, html, toast, withLoading, errorState } from '../ui.js';
-import { APP_NAME } from '../config.js';
+import { APP_NAME, maxAutoLogin } from '../config.js';
 
 /**
  * Вход по QR квитанции.
@@ -115,6 +115,23 @@ export function renderLogin(state) {
 
 
       <div id="loginError">${error ? errorState(error) : ''}</div>
+
+      <!--
+        Возврат после собственного выхода.
+
+        Внутри MAX приложение обычно входит само, но после нажатия «Выйти»
+        автовход выключен — иначе кнопка ничего бы не значила. Значит
+        человеку нужен явный путь обратно, и он не должен требовать
+        квитанции: личность подтверждает мессенджер, счёт уже привязан.
+      -->
+      ${platform.inMax && maxAutoLogin.suppressed() ? html`
+        <div class="dt-card" style="margin-top:14px">
+          <div class="meter-name">Вы вышли из приложения</div>
+          <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
+            Квитанция снова не нужна: MAX подтвердит, что это вы.
+          </div>
+          <button class="btn-primary" data-action="max-login">Войти через MAX</button>
+        </div>` : ''}
 
       <div id="scanActions">
         <!--

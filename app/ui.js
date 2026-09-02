@@ -60,11 +60,61 @@ export function plural(n, one, few, many) {
   return many;
 }
 
+/**
+ * День без времени: «23.08» в этом году, «23.08.2025» в прошлых.
+ *
+ * ГОД ПИШЕТСЯ ТОЛЬКО ТАМ, ГДЕ ОН ЧТО-ТО ЗНАЧИТ. Дата без года работает
+ * ровно один год, а потом начинает обманывать молча: в журнале, в архиве
+ * обращений и в ленте объявлений «15.08» перестаёт отвечать на вопрос
+ * «когда». Писать год всегда — лишний шум в списке за текущий месяц,
+ * поэтому правило одно на весь проект: свой год не пишем, чужой пишем.
+ */
+export function formatDay(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  const pad = (n) => String(n).padStart(2, '0');
+  const day = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}`;
+  return d.getFullYear() === new Date().getFullYear() ? day : `${day}.${d.getFullYear()}`;
+}
+
 export function formatDate(value) {
   if (!value) return '';
   const d = new Date(value);
   const pad = (n) => String(n).padStart(2, '0');
-  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${formatDay(value)}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * Хвост списка: сколько показано из скольких и кнопка «Показать ещё».
+ *
+ * Список, обрезанный молча, человек принимает за полный — и решает, что
+ * прошлогодняя жалоба пропала. Кнопка, а не страницы: это телефон,
+ * и «Вперёд» здесь означает «потерял место в списке».
+ *
+ * Ничего не рисует, когда показано всё: строка «Показаны 12 из 12» —
+ * это шум, на который человек однажды перестанет смотреть вовсе.
+ */
+export function moreLine({ shown, total, action }) {
+  if (!total || total <= shown) return '';
+  return `
+    <div class="dt-p" style="color:var(--tx-2);font-size:13px">
+      Показаны ${shown} из ${total}
+    </div>
+    <button class="btn-primary secondary" data-action="${esc(action)}">Показать ещё</button>`;
+}
+
+/**
+ * Перерисовать экран, не теряя места прокрутки.
+ *
+ * Экраны перерисовываются целиком, и без этого человек, нажавший
+ * «Показать ещё» внизу списка, оказывается в его начале — то есть
+ * теряет ровно то место, ради которого нажимал.
+ */
+export async function keepScroll(run) {
+  const keep = document.querySelector('#screen')?.scrollTop ?? 0;
+  await run();
+  const screen = document.querySelector('#screen');
+  if (screen) screen.scrollTop = keep;
 }
 
 /**
@@ -175,4 +225,48 @@ export async function withLoading(button, task) {
     button.classList.remove('loading');
     button.disabled = false;
   }
+}
+
+/* ─────────────── подтверждение действия ─────────────── */
+
+/**
+ * Спросить перед необратимым действием.
+ *
+ * НЕ `window.confirm`: системное окно выглядит по-разному везде,
+ * а в вебвью мессенджера ещё и появляется с задержкой и без наших
+ * шрифтов — человек успевает решить, что приложение сломалось.
+ *
+ * Опасное действие стоит СЛЕВА и красным, отказ — справа и обычной
+ * кнопкой: палец сам тянется к правому краю, и промах должен приводить
+ * к «оставить как есть», а не к выходу из приложения.
+ */
+export function confirmAction({ title, text = '', confirmLabel = 'Продолжить', danger = false }) {
+  return new Promise((resolve) => {
+    const host = document.createElement('div');
+    host.className = 'confirm-host';
+    host.innerHTML = html`
+      <div class="confirm-backdrop"></div>
+      <div class="confirm-box" role="dialog" aria-modal="true">
+        <div class="confirm-title">${esc(title)}</div>
+        ${text ? html`<div class="confirm-text">${esc(text)}</div>` : ''}
+        <div class="confirm-row">
+          <button type="button" class="confirm-yes ${danger ? 'danger' : ''}">${esc(confirmLabel)}</button>
+          <button type="button" class="confirm-no">Отмена</button>
+        </div>
+      </div>`;
+
+    const done = (answer) => {
+      host.remove();
+      document.body.classList.remove('dp-locked');
+      resolve(answer);
+    };
+
+    host.querySelector('.confirm-yes').addEventListener('click', () => done(true));
+    host.querySelector('.confirm-no').addEventListener('click', () => done(false));
+    host.querySelector('.confirm-backdrop').addEventListener('click', () => done(false));
+
+    document.body.appendChild(host);
+    document.body.classList.add('dp-locked');
+    host.querySelector('.confirm-no').focus();
+  });
 }

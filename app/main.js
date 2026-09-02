@@ -3,8 +3,10 @@ import { platform } from './platform.js';
 import { activePropertyStore, APP_NAME } from './config.js';
 import {
   $, setHtml, toast, loadingState, errorState, emptyState, formatDate, esc, html, withLoading,
+  confirmAction, moreLine, keepScroll,
 } from './ui.js';
 import { initRouter, reset, go, back, refresh, current, depth } from './router.js';
+import { maxAutoLogin } from './config.js';
 import { renderLogin, bindLogin, tryMaxLogin } from './screens/login.js';
 import { renderHome, homeSkeleton, shortAddress, greetingFor } from './screens/home.js';
 import {
@@ -12,6 +14,7 @@ import {
   handleRequestAction,
 } from './screens/requests.js';
 import { renderMeters, renderAnalytics, handleMeterAction } from './screens/meters.js';
+import { handleDateAction } from './datepicker.js';
 import {
   renderFeed, renderPost, renderPostForm, renderPolls, renderPoll, handleHouseAction,
 } from './screens/house.js';
@@ -372,6 +375,8 @@ async function handleAction(action, target) {
     refreshMe: async () => { state.me = await api.me(); },
   };
 
+  // Календарь общий для всех экранов, поэтому стоит первым в цепочке
+  if (await handleDateAction(action, target)) return;
   if (await handleRequestAction(action, target, ctx)) return;
   if (await handleCouncilAction(action, target, ctx)) return;
   if (await handleCouncilPostsAction(action, target, ctx)) return;
@@ -387,17 +392,50 @@ async function handleAction(action, target) {
     case 'reload':
       return boot();
 
+    /**
+     * Следующие полсотни уведомлений вместо страницы: см. notificationsTail.
+     *
+     * Место прокрутки возвращаем руками: экран перерисовывается целиком,
+     * и без этого человек, нажавший кнопку внизу списка, оказывается
+     * в его начале — то есть теряет ровно то место, ради которого
+     * и нажимал.
+     */
+    case 'notif-more':
+      notificationsShown += NOTIFICATIONS_STEP;
+      return keepScroll(refresh);
+
+    /** Возврат после собственного выхода: снимаем запрет и входим заново */
+    case 'max-login':
+      maxAutoLogin.allow();
+      return boot();
+
     case 'request':
       return go('request', { id: target.dataset.id });
 
     case 'request-success':
       return reset('requests');
 
-    case 'logout':
+    case 'logout': {
+      const sure = await confirmAction({
+        title: 'Выйти из приложения?',
+        text: 'Данные останутся на месте. Чтобы вернуться, понадобится '
+          + 'квитанция или вход через MAX.',
+        confirmLabel: 'Выйти',
+        danger: true,
+      });
+      if (!sure) return;
+
+      /**
+       * Внутри MAX запрещаем автовход до следующего явного согласия:
+       * иначе следующий запуск заведёт новую сессию и вернёт человека
+       * внутрь, будто кнопка «Выйти» ничего не делает.
+       */
+      maxAutoLogin.suppress();
       await api.logout().catch(() => {});
       state.me = null;
       state.currentProperty = null;
       return reset('login');
+    }
 
     case 'approve':
       try {
@@ -534,22 +572,33 @@ async function handleAction(action, target) {
 /**
  * Заставка при открытии.
  *
- * Держим её, пока грузятся данные, но не меньше 1,2 секунды: на быстром
- * интернете мелькание читается как сбой отрисовки. Заодно это единственное
- * место, где приложение здоровается — на главной приветствие занимало
- * строку при каждом заходе.
+ * Держим её ровно столько, сколько идёт движение — 4 секунды, — и не
+ * меньше: оборванная на середине анимация читается как сбой отрисовки,
+ * а не как быстрый интернет. Заодно это единственное место, где
+ * приложение здоровается: на главной приветствие занимало строку
+ * при каждом заходе.
+ *
+ * Если за 4 секунды данные не пришли, заставка переходит в ожидание —
+ * класс `waiting` убирает дуги, искры и волны и оставляет дыхание
+ * иконки. Хоровод, крутящийся десятый раз, читается как «всё зависло».
  */
-const SPLASH_MIN_MS = 1200;
+const SPLASH_MIN_MS = 4000;
 /** Ссылку-приглашение принимаем один раз за запуск: код одноразовый */
 let inviteFromLinkTried = false;
 let splashShownAt = 0;
+let splashWaitTimer = 0;
 
 function showSplash() {
   const splash = $('#splash');
   if (!splash) return;
   splash.hidden = false;
-  splash.classList.remove('gone');
+  splash.classList.remove('gone', 'waiting');
   splashShownAt = Date.now();
+
+  clearTimeout(splashWaitTimer);
+  splashWaitTimer = setTimeout(() => {
+    if (!splash.hidden) splash.classList.add('waiting');
+  }, SPLASH_MIN_MS);
 }
 
 function splashGreeting(name) {
@@ -557,6 +606,8 @@ function splashGreeting(name) {
   if (!node) return;
   const firstName = String(name ?? '').trim().split(/\s+/)[1] ?? name;
   node.textContent = firstName ? `${greetingFor(new Date())}, ${firstName}` : '';
+  // Появляется, когда стало известно имя, и больше не гаснет
+  node.classList.toggle('in', Boolean(node.textContent));
 }
 
 async function hideSplash() {
@@ -566,9 +617,10 @@ async function hideSplash() {
   const left = SPLASH_MIN_MS - (Date.now() - splashShownAt);
   if (left > 0) await new Promise((done) => setTimeout(done, left));
 
+  clearTimeout(splashWaitTimer);
   splash.classList.add('gone');
   // Прячем после анимации, иначе прозрачный слой перехватывает нажатия
-  setTimeout(() => { splash.hidden = true; }, 340);
+  setTimeout(() => { splash.hidden = true; splash.classList.remove('waiting'); }, 340);
 }
 
 async function bootInner({ silent = false } = {}) {
@@ -585,8 +637,9 @@ async function bootInner({ silent = false } = {}) {
     return;
   }
 
-  // Внутри MAX человек с привязанным счётом входит без квитанции
-  if (platform.inMax && !state.me) {
+  // Внутри MAX человек с привязанным счётом входит без квитанции —
+  // но не тогда, когда он только что вышел сам
+  if (platform.inMax && !state.me && !maxAutoLogin.suppressed()) {
     const status = await tryMaxLogin();
     if (status === 'needs_receipt') {
       return reset('login', { name: platform.unsafeName });
@@ -696,12 +749,25 @@ export async function boot(options = {}) {
  * приложение закрыто. Но список должен быть и здесь — иначе половина
  * событий продукта существует только в базе.
  */
+/** Столько уведомлений добавляет одно нажатие «Показать ещё». */
+const NOTIFICATIONS_STEP = 50;
+
+/**
+ * Сколько уведомлений показано сейчас.
+ *
+ * Живёт в модуле, а не рядом с разметкой: экран перерисовывается целиком,
+ * и состояние внутри него не пережило бы ни одной перерисовки. Раскрытый
+ * список остаётся раскрытым до конца сеанса — человек, дошедший до мая,
+ * не должен возвращаться туда заново после каждого ухода с экрана.
+ */
+let notificationsShown = NOTIFICATIONS_STEP;
+
 async function notificationsScreen() {
   const inMax = platform.inMax;
 
   let data;
   try {
-    data = await api.notifications();
+    data = await api.notifications(notificationsShown);
   } catch (error) {
     return errorState(error, 'reload');
   }
@@ -741,8 +807,15 @@ async function notificationsScreen() {
           </div>
         </div>`).join('')}
     </div>
+    ${moreLine({
+      shown: data.notifications.length,
+      total: data.total ?? data.notifications.length,
+      action: 'notif-more',
+    })}
     ${channel}`;
 }
+
+
 
 function start() {
   applyTheme(readTheme());

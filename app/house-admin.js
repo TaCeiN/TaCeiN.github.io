@@ -1,4 +1,5 @@
 import { esc, html, formatDate } from './ui.js';
+import { dateField, todayValue } from './datepicker.js';
 
 /**
  * Управление жизнью дома: объявления и опросы.
@@ -56,7 +57,7 @@ export function postForm({ houses = [], houseLabel = '' } = {}) {
       <textarea id="haBody" placeholder="Что происходит, где и что делать жильцам"></textarea>
 
       <div class="field-label">Актуально до</div>
-      <input type="datetime-local" id="haExpires">
+      ${dateField({ id: 'haExpires', withTime: true, min: todayValue(), placeholder: 'Без срока' })}
       <div class="dsp-hint">
         После этого времени объявление перестанет висеть на главном экране
         жителя. Без срока «нет воды до 18:00» остаётся там навсегда —
@@ -89,7 +90,14 @@ export function readPostForm() {
   };
 }
 
-export function postList(posts) {
+/**
+ * Список объявлений кабинета.
+ *
+ * `action` обязателен и приходит от вызывающего: кнопка без обработчика
+ * не ломает ни сборку, ни типы, ни тесты — только приложение, и значение
+ * по умолчанию здесь однажды стало бы именно такой кнопкой.
+ */
+export function postList(posts, total = posts.length, action) {
   if (posts.length === 0) {
     return '<div class="dsp-empty">Объявлений пока нет</div>';
   }
@@ -115,6 +123,12 @@ export function postList(posts) {
                      </button>`}
           </div>`).join('')}
       </div>
+
+      ${total > posts.length ? html`
+        <div class="dsp-more">
+          <span class="dsp-dim">Показаны ${posts.length} из ${total}</span>
+          <button class="dsp-mini" data-action="${esc(action)}">Показать ещё</button>
+        </div>` : ''}
     </div>`;
 }
 
@@ -151,7 +165,7 @@ export function pollForm() {
       <textarea id="hpOptions" placeholder="За&#10;Против&#10;Воздержался"></textarea>
 
       <div class="field-label">Голосование до</div>
-      <input type="datetime-local" id="hpCloses">
+      ${dateField({ id: 'hpCloses', withTime: true, min: todayValue(), placeholder: 'Срок не выбран' })}
 
       <div class="dsp-actions" style="margin-top:16px">
         <button class="dsp-act primary" data-action="hp-create">Запустить опрос</button>

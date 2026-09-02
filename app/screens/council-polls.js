@@ -4,6 +4,7 @@ import {
   esc, html, formatDate, plural, toast, withLoading, emptyState, errorState,
 } from '../ui.js';
 import { readPollForm } from '../house-admin.js';
+import { dateField, todayValue } from '../datepicker.js';
 
 /**
  * Опросы дома глазами председателя.
@@ -90,7 +91,7 @@ export function renderCouncilPollForm() {
     <div class="field-error" id="hpOptionsErr"></div>
 
     <div class="field-label">Голосование до</div>
-    <input type="datetime-local" id="hpCloses">
+    ${dateField({ id: 'hpCloses', withTime: true, min: todayValue(), placeholder: 'Срок не выбран' })}
     <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
       Опрос закроется сам в это время. Остановить его раньше срока нельзя,
       поэтому ставьте дату, до которой ответ вам действительно нужен.

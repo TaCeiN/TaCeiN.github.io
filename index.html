@@ -43,25 +43,51 @@
     показывается ровно один раз и по делу.
   -->
   <div class="splash" id="splash">
-    <div class="splash-logo">
-      <!--
-        Дом, в котором по очереди зажигаются окна.
+    <!--
+      Дом складывается из пятиугольника, прочерчивается линией, и от него
+      расходятся волны — одна метафора вместо крутящегося кружка.
 
-        Одна метафора вместо крутящегося кружка: пока приложение
-        собирает данные, дом «просыпается». Окна зажигаются с задержкой
-        друг за другом, крыша прочерчивается линией — движение занимает
-        ровно то время, которое мы всё равно ждём сервер.
-      -->
-      <svg viewBox="0 0 64 64" fill="none" width="64" height="64" aria-hidden="true">
-        <path class="sp-house"
-              d="M8 28L32 9L56 28V54C56 55.1 55.1 56 54 56H10C8.9 56 8 55.1 8 54V28Z"
-              stroke="currentColor" stroke-width="3"
-              stroke-linejoin="round" stroke-linecap="round"/>
-        <rect class="sp-win sp-win-1" x="18" y="32" width="10" height="10" rx="2.5" fill="currentColor"/>
-        <rect class="sp-win sp-win-2" x="36" y="32" width="10" height="10" rx="2.5" fill="currentColor"/>
-        <rect class="sp-win sp-win-3" x="27" y="45" width="10" height="11" rx="2.5" fill="currentColor"/>
-      </svg>
+      Всё движение декоративное, поэтому скрыто от чтения с экрана:
+      человеку со скринридером важны «Домовой» и приветствие, а не круги.
+    -->
+    <div class="splash-stage" aria-hidden="true">
+      <span class="sp-glow"></span>
+
+      <span class="sp-ripple"></span>
+      <span class="sp-ripple r2"></span>
+      <span class="sp-ripple r3"></span>
+
+      <div class="sp-sparks">
+        <span style="--a:15deg;  --r:130px; --dl:0s"></span>
+        <span style="--a:45deg;  --r:150px; --dl:.04s"></span>
+        <span style="--a:75deg;  --r:122px; --dl:.09s"></span>
+        <span style="--a:105deg; --r:146px; --dl:.02s"></span>
+        <span style="--a:135deg; --r:134px; --dl:.11s"></span>
+        <span style="--a:165deg; --r:158px; --dl:.06s"></span>
+        <span style="--a:195deg; --r:126px; --dl:.08s"></span>
+        <span style="--a:225deg; --r:150px; --dl:.01s"></span>
+        <span style="--a:255deg; --r:138px; --dl:.1s"></span>
+        <span style="--a:285deg; --r:158px; --dl:.05s"></span>
+        <span style="--a:315deg; --r:130px; --dl:.12s"></span>
+        <span style="--a:345deg; --r:146px; --dl:.07s"></span>
+      </div>
+
+      <span class="sp-orbit" style="--r0:0deg"></span>
+      <span class="sp-orbit o2" style="--r0:-90deg"></span>
+
+      <div class="splash-logo">
+        <svg class="sp-mark" viewBox="0 0 100 100" fill="none">
+          <polygon class="sp-pentagon" points="50,26 73,42 64,70 36,70 27,42"
+                   transform="rotate(-16 50 50)"/>
+          <!-- Контур дома с трубой и дверью, одной непрерывной линией:
+               длина ровно 174 единицы — от неё считается прочерчивание -->
+          <path class="sp-draw"
+                d="M 30 47 L 50 32 L 58 38 L 58 30 L 64 30 L 64 42.5 L 70 47
+                   L 70 67 L 56 67 L 56 55 L 44 55 L 44 67 L 30 67 L 30 47 Z"/>
+        </svg>
+      </div>
     </div>
+
     <div class="splash-title" id="splashTitle">Домовой</div>
     <div class="splash-greet" id="splashGreet"></div>
   </div>

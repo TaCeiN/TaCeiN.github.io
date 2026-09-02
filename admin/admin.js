@@ -1,4 +1,5 @@
 import { esc, html, formatDate, toast, withLoading, loadingState, errorState, emptyState } from '../app/ui.js';
+import { dateField, handleDateAction } from '../app/datepicker.js';
 import { API_BASE } from '../app/config.js';
 
 /**
@@ -67,7 +68,13 @@ const api = {
   login: (login, password) => request('POST', '/api/admin/login', { login, password }),
   logout: () => request('POST', '/api/admin/logout', {}),
   me: () => request('GET', '/api/admin/me'),
-  audit: () => request('GET', '/api/admin/audit'),
+  audit: ({ page, from, to, action } = {}) => {
+    const params = new URLSearchParams({ page: String(page ?? 1) });
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    if (action) params.set('action', action);
+    return request('GET', `/api/admin/audit?${params}`);
+  },
 
   houses: (q) => request('GET', `/api/admin/houses?q=${encodeURIComponent(q)}`),
   house: (key) => request('GET', `/api/admin/houses/${encodeURIComponent(key)}`),
@@ -128,6 +135,11 @@ const state = {
   tableName: null,
   tablePage: 1,
   tableQuery: '',
+  /** Журнал: страница и границы периода — записи живут дольше одного экрана */
+  auditPage: 1,
+  auditFrom: '',
+  auditTo: '',
+  auditAction: '',
 };
 
 const main = () => document.querySelector('#admMain');
@@ -173,6 +185,23 @@ function tabsBar() {
     </div>`;
 }
 
+/**
+ * Сколько совпадений показано, а сколько их всего.
+ *
+ * Поиск отдаёт полсотни строк и молчал об остальных: оператор видел
+ * список и считал, что видит всё. Для дома, записанного в базе двумя
+ * способами, это прямой путь к неверному решению — не нашёл и завёл
+ * второй. Кнопки «показать ещё» здесь нет намеренно: правильный ответ
+ * на «слишком много совпадений» — сузить запрос, а не листать.
+ */
+function searchTail(found) {
+  if (!found || found.total <= found.rows.length) return '';
+  return html`
+    <p class="dsp-dim">
+      Показаны первые ${found.rows.length} из ${found.total} — уточните запрос
+    </p>`;
+}
+
 /* ─────────────── дома ─────────────── */
 
 /**
@@ -183,7 +212,9 @@ function tabsBar() {
  * не известно. Показывать ему «все дома» бессмысленно — их четырнадцать
  * тысяч по одной области.
  */
-function housesSection(rows, q) {
+function housesSection(found, q) {
+  const rows = found?.rows ?? null;
+
   return html`
     <div class="dsp-card">
       <h2>Дома</h2>
@@ -191,6 +222,12 @@ function housesSection(rows, q) {
       <input type="text" id="admHouseQ" value="${esc(q ?? '')}"
              placeholder="Например: Ленина 85">
       <button class="btn-primary" data-action="find-houses">Найти</button>
+      ${rows === null ? html`
+        <p class="dsp-dim">
+          Начните с адреса — можно часть: «Ленина 85», «Батайск Мира».
+          Список всех домов здесь не показывается: их четырнадцать тысяч
+          на одну область.
+        </p>` : ''}
     </div>
 
     ${rows === null ? '' : rows.length === 0
@@ -216,6 +253,7 @@ function housesSection(rows, q) {
                 </tr>`).join('')}
             </tbody>
           </table>
+          ${searchTail(found)}
         </div>`}`;
 }
 
@@ -353,13 +391,20 @@ function claimsSection(rows) {
 
 /* ─────────────── жители ─────────────── */
 
-function usersSection(rows, q) {
+function usersSection(found, q) {
+  const rows = found?.rows ?? null;
+
   return html`
     <div class="dsp-card">
       <h2>Жители</h2>
       <div class="field-label">Имя или телефон</div>
       <input type="text" id="admUserQ" value="${esc(q ?? '')}" placeholder="Например: Петров">
       <button class="btn-primary" data-action="find-users">Найти</button>
+      ${rows === null ? html`
+        <p class="dsp-dim">
+          Найдите человека по фамилии или телефону — например «Петров»
+          или «903». В карточке видно его квартиры и можно закрыть доступ.
+        </p>` : ''}
     </div>
 
     ${rows === null ? '' : rows.length === 0
@@ -379,6 +424,7 @@ function usersSection(rows, q) {
                 </tr>`).join('')}
             </tbody>
           </table>
+          ${searchTail(found)}
         </div>`}`;
 }
 
@@ -424,7 +470,9 @@ function userCardSection(u) {
 
 /* ─────────────── организации ─────────────── */
 
-function orgsSection(rows, q) {
+function orgsSection(found, q) {
+  const rows = found?.rows ?? null;
+
   return html`
     <div class="dsp-card">
       <h2>Организации</h2>
@@ -459,6 +507,7 @@ function orgsSection(rows, q) {
                 </tr>`).join('')}
             </tbody>
           </table>
+          ${searchTail(found)}
         </div>`}`;
 }
 
@@ -518,10 +567,34 @@ function cellText(value) {
 
 /* ─────────────── журнал ─────────────── */
 
-function auditSection(rows) {
-  if (!rows.length) {
-    return emptyState('Журнал пуст', 'Здесь появится каждое действие оператора');
-  }
+/**
+ * Журнал страницами, а не последними двумя сотнями.
+ *
+ * Он заведён ради разбора спора через полгода, и записи старше потолка
+ * были недостижимы из кабинета вообще — то есть к нужному сроку журнал
+ * оказывался пустым. Приём тот же, что в разделе «База»: страница,
+ * общее число, кнопки по краям.
+ */
+/**
+ * Действия в выпадающем списке.
+ *
+ * Подпись берётся человеческая, но два разных действия могут совпасть
+ * в ней слово в слово — назначение и снятие председателя описываются
+ * одной строкой. Тогда рядом дописывается машинное имя: два одинаковых
+ * пункта в списке хуже одного технического слова.
+ */
+function auditActionOptions(actions) {
+  const twice = (label) => actions.filter((a) => a.label === label).length > 1;
+
+  return actions.map((a) => html`
+    <option value="${esc(a.action)}" ${state.auditAction === a.action ? 'selected' : ''}>
+      ${esc(a.label)}${twice(a.label) ? ` (${esc(a.action)})` : ''}
+    </option>`).join('');
+}
+
+function auditSection(page) {
+  const pages = Math.max(1, Math.ceil(page.total / page.pageSize));
+  const filtered = Boolean(state.auditFrom || state.auditTo || state.auditAction);
 
   return html`
     <div class="dsp-card">
@@ -530,25 +603,73 @@ function auditSection(rows) {
         Каждое действие оператора, меняющее данные. Записи не удаляются
         и переживают выключение учётки.
       </p>
-      <table class="dsp-table">
-        <thead><tr><th>Когда</th><th>Кто</th><th>Что</th><th>Над чем</th></tr></thead>
-        <tbody>
-          ${rows.map((r) => html`
-            <tr>
-              <td>${esc(formatDate(r.createdAt))}</td>
-              <td>${esc(r.adminName)}</td>
-              <td>${esc(r.summary)}<div class="dsp-dim">${esc(r.action)}</div></td>
-              <td class="dsp-dim">${esc(r.targetKind)}: ${esc(r.targetId)}</td>
-            </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>`;
+
+      <div class="field-label">Показать записи с</div>
+      ${dateField({ id: 'admAuditFrom', value: state.auditFrom, placeholder: 'С самого начала' })}
+      <div class="field-label">по</div>
+      ${dateField({ id: 'admAuditTo', value: state.auditTo, placeholder: 'По сегодня' })}
+      <div class="field-label">Действие</div>
+      <select id="admAuditAction" class="dsp-select" data-action="audit-action">
+        <option value="">любое</option>
+        ${auditActionOptions(page.actions ?? [])}
+      </select>
+
+      <button class="dsp-mini" data-action="audit-filter">Показать</button>
+      ${filtered
+        ? '<button class="dsp-mini" data-action="audit-reset">Показать всё</button>'
+        : ''}
+    </div>
+
+    ${page.rows.length === 0
+      ? emptyState(
+          filtered ? 'За этот период записей нет' : 'Журнал пуст',
+          filtered
+            ? 'Возьмите период шире или снимите его совсем'
+            : 'Здесь появится каждое действие оператора',
+        )
+      : html`
+        <div class="dsp-card">
+          <table class="dsp-table">
+            <thead><tr><th>Когда</th><th>Кто</th><th>Что</th><th>Над чем</th></tr></thead>
+            <tbody>
+              <!--
+                «Что» говорит по-русски, «Над чем» показывает адрес.
+                Раньше в первой колонке стояли две строки сразу — русская
+                и машинная, — а во второй хэш дома на половину ширины
+                таблицы. Машинное имя теперь живёт в фильтре, ключ дома —
+                в подсказке при наведении.
+              -->
+              ${page.rows.map((r) => html`
+                <tr>
+                  <td>${esc(formatDate(r.createdAt))}</td>
+                  <td>${esc(r.adminName)}</td>
+                  <td>${esc(r.summary)}</td>
+                  <td title="${esc(r.targetId)}">${esc(r.targetLabel ?? r.targetId)}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+
+          <div class="dsp-dim">
+            Страница ${page.page} из ${pages} · всего ${page.total}
+          </div>
+          <button class="dsp-mini" data-action="audit-page" data-page="${page.page - 1}"
+                  ${page.page <= 1 ? 'disabled' : ''}>Назад</button>
+          <button class="dsp-mini" data-action="audit-page" data-page="${page.page + 1}"
+                  ${page.page * page.pageSize >= page.total ? 'disabled' : ''}>Вперёд</button>
+        </div>`}`;
 }
 
 /* ─────────────── отрисовка ─────────────── */
 
 async function renderTab() {
-  if (state.tab === 'audit') return auditSection(await api.audit());
+  if (state.tab === 'audit') {
+    return auditSection(await api.audit({
+      page: state.auditPage,
+      from: state.auditFrom,
+      to: state.auditTo,
+      action: state.auditAction,
+    }));
+  }
 
   if (state.tab === 'houses') {
     if (state.openHouse) return houseCardSection(await api.house(state.openHouse));
@@ -597,6 +718,9 @@ async function render() {
 /* ─────────────── действия ─────────────── */
 
 async function handleAction(action, target) {
+  // Календарь общий на весь проект: сам рисует шторку и пишет значение в поле
+  if (await handleDateAction(action, target)) return;
+
   switch (action) {
     case 'do-login': {
       const login = document.querySelector('#admLogin')?.value.trim() ?? '';
@@ -810,6 +934,35 @@ async function handleAction(action, target) {
 
     case 'table-page': {
       state.tablePage = Math.max(1, Number(target.dataset.page) || 1);
+      await render();
+      break;
+    }
+
+    case 'audit-page': {
+      state.auditPage = Math.max(1, Number(target.dataset.page) || 1);
+      await render();
+      break;
+    }
+
+    case 'audit-action':
+      // Выбор в списке ничего не грузит сам: грузит кнопка «Показать»
+      return;
+
+    case 'audit-filter': {
+      state.auditFrom = document.querySelector('#admAuditFrom')?.value ?? '';
+      state.auditTo = document.querySelector('#admAuditTo')?.value ?? '';
+      state.auditAction = document.querySelector('#admAuditAction')?.value ?? '';
+      // Период сменился — прежний номер страницы к нему отношения не имеет
+      state.auditPage = 1;
+      await render();
+      break;
+    }
+
+    case 'audit-reset': {
+      state.auditFrom = '';
+      state.auditTo = '';
+      state.auditAction = '';
+      state.auditPage = 1;
       await render();
       break;
     }

@@ -1,9 +1,10 @@
 import { api } from '../api.js';
 import { platform } from '../platform.js';
 import {
-  esc, html, formatDate, toast, withLoading, emptyState, errorState,
+  esc, html, formatDate, toast, withLoading, emptyState, errorState, moreLine, keepScroll,
 } from '../ui.js';
 import { POST_KINDS, readPostForm } from '../house-admin.js';
+import { dateField, todayValue } from '../datepicker.js';
 
 /**
  * Объявления совета дома.
@@ -18,27 +19,35 @@ import { POST_KINDS, readPostForm } from '../house-admin.js';
 
 const KIND_TONE = { outage: 'bad', meeting: 'new', news: '' };
 
+/** Сколько объявлений показано: за год их набирается больше сотни. */
+const POSTS_STEP = 50;
+let postsShown = POSTS_STEP;
+
 export async function renderCouncilPosts(state) {
   const house = state.council?.house;
   if (!house) return errorState(new Error('Дом не выбран'), 'council');
 
-  let posts;
+  let data;
   try {
-    posts = (await api.chairmanPosts(house.houseKey)).posts;
+    data = await api.chairmanPosts(house.houseKey, postsShown);
   } catch (error) {
     return errorState(error, 'council');
   }
 
+  const posts = data.posts;
+  const total = data.total ?? posts.length;
+
   return html`
-    <div class="dt-title" style="margin-top:0">Объявления</div>
-    <div class="dt-meta">${esc(house.houseLabel)}</div>
+    <div class="dt-meta" style="margin-top:0">${esc(house.houseLabel)}</div>
 
     ${posts.length === 0
       ? emptyState(
           'Объявлений пока нет',
           'Напишите первое — его увидят жители дома',
         )
-      : html`<div class="list" style="margin-top:14px">${posts.map(postRow).join('')}</div>`}
+      : html`
+        <div class="list" style="margin-top:14px">${posts.map(postRow).join('')}</div>
+        ${moreLine({ shown: posts.length, total, action: 'council-posts-more' })}`}
 
     <button class="btn-primary" data-action="council-post-new">Написать объявление</button>`;
 }
@@ -105,7 +114,7 @@ export function renderCouncilPostForm() {
     <div class="field-error" id="haBodyErr"></div>
 
     <div class="field-label">Актуально до</div>
-    <input type="datetime-local" id="haExpires">
+    ${dateField({ id: 'haExpires', withTime: true, min: todayValue(), placeholder: 'Без срока' })}
     <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
       После этого времени объявление перестанет висеть на главном экране
       жителя. Без срока «нет воды до 18:00» остаётся там навсегда —
@@ -117,7 +126,15 @@ export function renderCouncilPostForm() {
 
 export async function handleCouncilPostsAction(action, target, ctx) {
   if (action === 'council-posts') {
+    // Вход в раздел показывает свежее: прошлый «показать ещё» не тянем
+    postsShown = POSTS_STEP;
     await ctx.go('council-posts');
+    return true;
+  }
+
+  if (action === 'council-posts-more') {
+    postsShown += POSTS_STEP;
+    await keepScroll(() => ctx.refresh());
     return true;
   }
 

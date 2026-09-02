@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { platform } from '../platform.js';
 import {
   esc, html, formatDate, errorState, emptyState, toast, withLoading, plural,
+  moreLine, keepScroll,
 } from '../ui.js';
 import { waitingText } from './home.js';
 
@@ -25,6 +26,17 @@ const CATEGORY_TONE = {
 
 /* ─────────────── лента ─────────────── */
 
+/**
+ * Сколько карточек ленты показано сейчас.
+ *
+ * За год дом накапливает больше сотни объявлений — десять экранов
+ * прокрутки, где человек читает две верхние карточки.
+ */
+const FEED_STEP = 50;
+let feedShown = FEED_STEP;
+/** Доска, для которой посчитано показанное: у соседей свой счёт */
+let feedScope = null;
+
 export async function renderFeed(state, { category } = {}) {
   /**
    * Соседи, лента и опросы — уровень 1: это данные ДРУГИХ людей, и до
@@ -43,9 +55,16 @@ export async function renderFeed(state, { category } = {}) {
   }
 
   let posts;
+  let total;
   try {
     const scope = category === 'market' ? 'market' : 'house';
-    posts = (await api.feed(scope)).posts
+    if (scope !== feedScope) {
+      feedShown = FEED_STEP;
+      feedScope = scope;
+    }
+    const data = await api.feed(scope, feedShown);
+    total = data.total ?? data.posts.length;
+    posts = data.posts
       /**
        * Вторая проверка поверх серверного scope.
        *
@@ -90,6 +109,7 @@ export async function renderFeed(state, { category } = {}) {
   return html`
     ${boards}
     <div class="list">${posts.map(postRow).join('')}</div>
+    ${moreLine({ shown: posts.length, total, action: 'feed-more' })}
     ${isMarket ? '<button class="btn-primary" data-action="new-post">Разместить объявление</button>' : ''}`;
 }
 
@@ -325,6 +345,11 @@ export async function handleHouseAction(action, target, ctx) {
   switch (action) {
     case 'post':
       await ctx.show('post', { id: target.dataset.id });
+      return true;
+
+    case 'feed-more':
+      feedShown += FEED_STEP;
+      await keepScroll(() => ctx.refresh());
       return true;
 
     case 'new-post':

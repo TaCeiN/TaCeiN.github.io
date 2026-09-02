@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { platform } from '../platform.js';
 import {
-  esc, html, errorState, emptyState, toast, withLoading,
+  esc, html, errorState, emptyState, toast, withLoading, plural,
 } from '../ui.js';
 
 /**
@@ -92,9 +92,10 @@ export async function renderMeters(state) {
 /**
  * Форма «завести счётчик».
  *
- * Заводит его сам житель: вид, заводской номер и дата поверки написаны
- * на самом приборе. У управляющей компании этих данных может не быть
- * вовсе — квартирные счётчики часто ставит собственник.
+ * Вопрос ровно один: что прибор считает. Заводской номер и дату поверки
+ * дневнику знать незачем — показания никуда не уходят, сверять их
+ * по номеру некому, — а три поля вместо одного это три повода бросить
+ * форму на середине.
  */
 function addMeterForm(kinds = [], existing = []) {
   const taken = new Set(existing.map((m) => m.kind));
@@ -112,16 +113,6 @@ function addMeterForm(kinds = [], existing = []) {
                 data-v="${esc(k.kind)}">${esc(k.label)}</span>`).join('')}
       </div>
 
-      <div class="field-label">Заводской номер</div>
-      <input type="text" id="meterSerial" placeholder="Написан на корпусе прибора" autocomplete="off">
-
-      <div class="field-label">Поверка до</div>
-      <input type="date" id="meterDue">
-      <div class="dt-p" style="font-size:13px;color:var(--tx-2);margin-top:6px">
-        Дата из паспорта прибора. Если её нет под рукой — оставьте пустой,
-        добавите позже. Просроченная поверка переводит начисление на норматив.
-      </div>
-
       <div class="field-error" id="meterAddErr"></div>
       <button class="btn-primary" data-action="add-meter">Добавить</button>
     </div>`;
@@ -133,21 +124,13 @@ function meterCard(m, period) {
   return html`
     <div class="meter-card" data-meter="${esc(m.id)}">
       <div class="meter-top">
-        <div>
-          <div class="meter-name">${esc(m.label)}</div>
-          ${m.serial ? `<div class="meter-serial">№ ${esc(m.serial)}</div>` : ''}
-        </div>
+        <div class="meter-name">${esc(m.label)}</div>
         <div class="meter-prev">
           ${m.previous !== null
             ? `было ${fmt(m.previous)} ${esc(m.unit)}`
             : 'первая запись'}
         </div>
       </div>
-
-      ${m.verificationOverdue ? html`
-        <div class="warn-line bad">
-          Поверка просрочена. До неё начисление идёт по нормативу.
-        </div>` : ''}
 
       ${submitted ? html`
         <div class="meter-done">
@@ -203,6 +186,7 @@ export async function renderAnalytics(state) {
         text: Math.round(p.value / 100),
       })))}
       ${deltaLine(pay.change, 'Начисление')}
+      ${latestBreakdown(pay.latest)}
     </div>
 
     ${data.forecast ? html`
@@ -237,6 +221,53 @@ export async function renderAnalytics(state) {
           </div>`).join('')}
       </div>` : ''}
   `;
+}
+
+/**
+ * Из чего сложилась сумма последнего месяца.
+ *
+ * Столбик графика — сумма всех квитанций месяца, а квитанций у квартиры
+ * столько, сколько лицевых счетов: ЖКУ и свет приходят отдельно. Без
+ * этой строки человек видит одну цифру и не знает, из чего она.
+ *
+ * При одном счёте строка не нужна: она повторила бы столбик.
+ */
+function latestBreakdown(latest) {
+  if (!latest || latest.accountsTotal <= 1) return '';
+
+  /**
+   * Две квитанции с одинаковой подписью — штатный случай: услуга в счёте
+   * называется одинаково, а платят разным организациям. Тогда различает
+   * номер счёта, иначе строка читается как «ЖКУ дважды».
+   */
+  const twice = (label) => latest.parts.filter((p) => p.label === label).length > 1;
+  const parts = latest.parts
+    .map((p) => (twice(p.label)
+      ? `${esc(p.label)} по счёту ${esc(p.persAcc)} ${esc(p.formatted)}`
+      : `${esc(p.label)} ${esc(p.formatted)}`))
+    .join(' · ');
+
+  /**
+   * Месяц, где отсканирована не каждая квитанция, без оговорки выглядит
+   * как «стало дешевле» — это та же ложь, что и два столбца за один
+   * месяц, только с другой стороны.
+   */
+  const missing = latest.partial
+    ? html`<div class="meter-hint" style="margin-top:6px">
+        За ${esc(periodName(latest.period))} ${esc(String(latest.parts.length))}
+        ${esc(plural(latest.parts.length, 'квитанция', 'квитанции', 'квитанций'))}
+        из ${esc(String(latest.accountsTotal))} — сумма неполная.
+        Отсканируйте остальные, чтобы сравнение было честным.
+      </div>`
+    : '';
+
+  const month = periodName(latest.period);
+
+  return html`
+    <div class="meter-hint" style="margin-top:10px">
+      ${esc(month.charAt(0).toUpperCase() + month.slice(1))}: ${parts}
+    </div>
+    ${missing}`;
 }
 
 /**
@@ -287,8 +318,6 @@ export async function handleMeterAction(action, target, ctx) {
 
   if (action === 'add-meter') {
     const kind = document.querySelector('#meterKinds .chip.sel')?.dataset.v;
-    const serial = document.querySelector('#meterSerial')?.value.trim() ?? '';
-    const due = document.querySelector('#meterDue')?.value ?? '';
     const error = document.querySelector('#meterAddErr');
 
     if (!kind) {
@@ -302,7 +331,7 @@ export async function handleMeterAction(action, target, ctx) {
     await withLoading(target, async () => {
       try {
         await api.addMeter(ctx.state.currentProperty.propertyId, {
-          kind, serial, verificationDue: due || undefined,
+          kind,
         });
         toast('Счётчик добавлен');
         await ctx.refresh();

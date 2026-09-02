@@ -214,9 +214,11 @@ export const api = {
    * Обращения ОДНОЙ квартиры — той, что открыта в приложении.
    * Без адреса сервер отдаёт всё доступное; так ведёт себя старый фронт.
    */
-  requests: (propertyId) => request(
+  requests: (propertyId, limit) => request(
     'GET',
-    propertyId ? `/api/requests?propertyId=${encodeURIComponent(propertyId)}` : '/api/requests',
+    '/api/requests'
+    + (propertyId ? `?propertyId=${encodeURIComponent(propertyId)}` : '?')
+    + (limit ? `&limit=${encodeURIComponent(limit)}` : ''),
   ),
   request: (id) => request('GET', `/api/requests/${id}`),
   createRequest: (payload) => request('POST', '/api/requests', payload),
@@ -277,8 +279,12 @@ export const api = {
    *        'market' — доска соседей. Без scope приходит всё: так главный
    *        экран одним запросом получает и баннер аварии, и остальное.
    */
-  feed: (scope) =>
-    request('GET', scope ? `/api/feed?scope=${encodeURIComponent(scope)}` : '/api/feed'),
+  feed: (scope, limit) => request(
+    'GET',
+    '/api/feed?'
+    + (scope ? `scope=${encodeURIComponent(scope)}` : '')
+    + (limit ? `&limit=${encodeURIComponent(limit)}` : ''),
+  ),
   createPost: (payload) => request('POST', '/api/feed', payload),
 
   polls: () => request('GET', '/api/polls'),
@@ -308,7 +314,10 @@ export const api = {
       client: platform.clientTag ?? undefined,
       ...(extra ?? {}),
     }),
-  notifications: () => request('GET', '/api/notifications'),
+  notifications: (limit) => request(
+    'GET',
+    limit ? `/api/notifications?limit=${encodeURIComponent(limit)}` : '/api/notifications',
+  ),
   /** Настройки доставки: что присылать ботом, а что оставить только в списке */
   notifySettings: () => request('GET', '/api/notifications/settings'),
   saveNotifySettings: (payload) => request('POST', '/api/notifications/settings', payload),
@@ -330,8 +339,11 @@ export const api = {
    * без ключа он берёт ПЕРВОЕ председательство человека, и у того,
    * кто ведёт совет в двух домах, объявление молча уйдёт не туда.
    */
-  chairmanPosts: (houseKey) =>
-    request('GET', `/api/chairman/posts?houseKey=${encodeURIComponent(houseKey)}`),
+  chairmanPosts: (houseKey, limit) => request(
+    'GET',
+    `/api/chairman/posts?houseKey=${encodeURIComponent(houseKey)}`
+    + (limit ? `&limit=${encodeURIComponent(limit)}` : ''),
+  ),
   chairmanCreatePost: (payload) => request('POST', '/api/chairman/posts', payload),
   chairmanRemovePost: (id, houseKey) =>
     request('DELETE', `/api/chairman/posts/${id}?houseKey=${encodeURIComponent(houseKey)}`),
@@ -340,8 +352,13 @@ export const api = {
   chairmanCreatePoll: (payload) => request('POST', '/api/chairman/polls', payload),
 
   /** Обращения дома в УК — читает и председатель, только не меняет статус. */
-  chairmanRequests: (houseKey) =>
-    request('GET', `/api/chairman/requests?houseKey=${encodeURIComponent(houseKey)}`),
+  chairmanRequests: (houseKey, { tab, q, limit } = {}) => {
+    const params = new URLSearchParams({ houseKey });
+    if (tab) params.set('tab', tab);
+    if (q) params.set('q', q);
+    if (limit) params.set('limit', String(limit));
+    return request('GET', `/api/chairman/requests?${params}`);
+  },
   chairmanRequest: (id, houseKey) =>
     request('GET', `/api/chairman/requests/${id}?houseKey=${encodeURIComponent(houseKey)}`),
   chairmanCommentRequest: (id, text, houseKey) =>

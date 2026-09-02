@@ -1,6 +1,7 @@
 import { api } from '../api.js';
 import {
-  esc, html, formatDate, plural, toast, withLoading, emptyState, errorState, eventAuthor,
+  esc, html, formatDate, formatDay, plural, toast, withLoading, emptyState, errorState,
+  eventAuthor, moreLine, keepScroll,
 } from '../ui.js';
 
 /**
@@ -207,15 +208,32 @@ export async function renderCouncilHouse(state) {
   state.councilHouse = data;
 
   return html`
-    <div class="dt-title" style="margin-top:0">${esc(data.address)}</div>
-    <div class="dt-meta">${data.totals.flats} квартир · ${data.totals.registered} в приложении</div>
+    <div class="dt-meta" style="margin-top:0">
+      ${esc(data.address)} · ${data.totals.flats} квартир · ${data.totals.registered} в приложении
+    </div>
 
-    <div class="stats" style="margin-top:14px">
-      <div class="stat"><div class="n">${data.totals.paid}</div><div class="l">Оплачено</div></div>
+    <!--
+      Четыре состояния оплаты складываются в число квартир без остатка.
+      Раньше плиток было три, и на доме в 60 квартир «42 оплачено,
+      0 просрочено» оставляло 18 квартир необъяснёнными — председатель
+      считал разницу должниками.
+    -->
+    <div class="stats four" style="margin-top:14px">
+      <div class="stat"><div class="n">${data.totals.paid}</div><div class="l">Отмечено оплаченным</div></div>
+      <div class="stat"><div class="n">${data.totals.due}</div><div class="l">Ждут оплаты</div></div>
       <div class="stat ${data.totals.overdue ? 'bad' : ''}">
         <div class="n">${data.totals.overdue}</div><div class="l">Срок прошёл</div>
       </div>
-      <div class="stat"><div class="n">${data.totals.metersSubmitted}</div><div class="l">Записали показания</div></div>
+      <div class="stat"><div class="n">${data.totals.unknown}</div><div class="l">Нет данных</div></div>
+    </div>
+
+    <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
+      Показания записали: ${data.totals.metersSubmitted} ${plural(
+        data.totals.metersSubmitted, 'квартира', 'квартиры', 'квартир',
+      )} из ${data.totals.flats}.
+      ${data.totals.unknown
+        ? '«Нет данных» — квартиры, по которым мы не видели ни одной квитанции: сказать про них «не оплачено» нельзя.'
+        : ''}
     </div>
 
     <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
@@ -252,8 +270,7 @@ function flatRow(f) {
         ${f.meters.length ? html`
           <div class="d" style="font-size:12px">
             ${f.meters.map((m) => esc(
-              `${m.label}: ${m.lastValue ?? '—'}${m.submittedThisPeriod ? '' : ' (нет записи)'}`
-              + (m.verificationOverdue ? ' · поверка просрочена' : ''),
+              `${m.label}: ${m.lastValue ?? '—'}${m.submittedThisPeriod ? '' : ' (нет записи)'}`,
             )).join(' · ')}
           </div>` : ''}
       </div>
@@ -272,27 +289,67 @@ const REQUEST_TONE = { done: 'ok', new: 'new', rejected: 'bad' };
  * список до «активных» значило бы прятать половину переписки, которую
  * дом уже вёл с УК.
  */
+/**
+ * Экран обращений дома: вкладка, поиск и сколько строк показано.
+ *
+ * Председатель заходит раз в неделю и спрашивает «что сейчас горит»,
+ * а получал архив дома за год одним свитком на 28 экранов прокрутки.
+ * Состояние живёт в модуле: экран перерисовывается целиком.
+ */
+const REQ_STEP = 50;
+const councilReq = { tab: 'open', query: '', shown: REQ_STEP };
+
 export async function renderCouncilRequests(state) {
   const house = state.council?.house;
   if (!house) return errorState(new Error('Дом не выбран'), 'council');
 
-  let requests;
+  let data;
   try {
-    requests = (await api.chairmanRequests(house.houseKey)).requests;
+    data = await api.chairmanRequests(house.houseKey, {
+      tab: councilReq.tab,
+      q: councilReq.query || undefined,
+      limit: councilReq.shown,
+    });
   } catch (error) {
     return errorState(error, 'council');
   }
 
+  const requests = data.requests;
+  const counts = data.counts ?? { open: requests.length, all: requests.length };
+  const total = data.total ?? requests.length;
+
+  const tab = (id, label, n) => html`
+    <span class="tab ${councilReq.tab === id ? 'on' : ''}"
+          data-action="council-req-tab" data-tab="${id}">${label} · ${n}</span>`;
+
   return html`
-    <div class="dt-title" style="margin-top:0">Обращения дома</div>
-    <div class="dt-meta">${esc(house.houseLabel)}</div>
+    <div class="dt-meta" style="margin-top:0">${esc(house.houseLabel)}</div>
+
+    <div class="tabs" style="padding:12px 0">
+      ${tab('open', 'Открытые', counts.open)}
+      ${tab('all', 'Все', counts.all)}
+    </div>
+
+    <div class="search-row">
+      <input type="search" id="councilReqQ" value="${esc(councilReq.query)}"
+             placeholder="Номер, квартира или слово">
+      <button class="btn-primary secondary" data-action="council-req-search">Найти</button>
+    </div>
+    ${councilReq.query ? html`
+      <button class="btn-primary secondary" data-action="council-req-reset">
+        Показать все обращения
+      </button>` : ''}
 
     ${requests.length === 0
       ? emptyState(
-          'Обращений пока нет',
-          'Здесь появится каждая жалоба и вызов мастера от жителей дома',
+          councilReq.query ? 'Ничего не нашлось' : 'Обращений пока нет',
+          councilReq.query
+            ? 'Попробуйте номер обращения, номер квартиры или слово из заголовка'
+            : 'Здесь появится каждая жалоба и вызов мастера от жителей дома',
         )
-      : html`<div class="list" style="margin-top:14px">${requests.map(requestRow).join('')}</div>`}`;
+      : html`
+        <div class="list" style="margin-top:14px">${requests.map(requestRow).join('')}</div>
+        ${moreLine({ shown: requests.length, total, action: 'council-req-more' })}`}`;
 }
 
 function requestRow(r) {
@@ -309,7 +366,8 @@ function requestRow(r) {
       <div class="content">
         <div class="t">${esc(r.title)}</div>
         <div class="d ${awaiting ? 'ask' : ''}">
-          Кв. ${esc(r.flat || '—')} · ${esc(r.authorName || 'Житель')}${awaiting ? ' · ждёт ответа' : ''}
+          Кв. ${esc(r.flat || '—')} · ${esc(r.authorName || 'Житель')} ·
+          ${esc(formatDay(r.createdAt))}${awaiting ? ' · ждёт ответа' : ''}
         </div>
       </div>
       <span class="pill ${tone}">${esc(r.statusLabel)}</span>
@@ -427,7 +485,38 @@ export async function handleCouncilAction(action, target, ctx) {
   }
 
   if (action === 'council-requests') {
+    // Вход в раздел — это всегда взгляд «что нового», а не прошлый поиск
+    councilReq.tab = 'open';
+    councilReq.query = '';
+    councilReq.shown = REQ_STEP;
     await ctx.go('council-requests');
+    return true;
+  }
+
+  if (action === 'council-req-tab') {
+    councilReq.tab = target.dataset.tab;
+    councilReq.shown = REQ_STEP;
+    await ctx.refresh();
+    return true;
+  }
+
+  if (action === 'council-req-search') {
+    councilReq.query = document.querySelector('#councilReqQ')?.value.trim() ?? '';
+    councilReq.shown = REQ_STEP;
+    await ctx.refresh();
+    return true;
+  }
+
+  if (action === 'council-req-reset') {
+    councilReq.query = '';
+    councilReq.shown = REQ_STEP;
+    await ctx.refresh();
+    return true;
+  }
+
+  if (action === 'council-req-more') {
+    councilReq.shown += REQ_STEP;
+    await keepScroll(() => ctx.refresh());
     return true;
   }
 
