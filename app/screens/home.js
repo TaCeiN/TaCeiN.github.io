@@ -355,7 +355,7 @@ export async function renderHome(state) {
       </div>
       <div class="pay-card-bottom">
         <span class="pay-due">${esc(payNote(bill))}</span>
-        <span class="pay-quickbtn tappable" data-action="pay">Оплатить</span>
+        ${bill?.outstandingKopecks ? `<span class="pay-quickbtn tappable" data-action="pay">Оплатить</span>` : ""}
       </div>
     </button>
 

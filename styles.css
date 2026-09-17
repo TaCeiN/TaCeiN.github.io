@@ -1318,3 +1318,92 @@ button.dp-title:active{ background:var(--fade); }
    часто гасится вебвью, и человек решает, что нажатие не сработало. */
 .file-preview{ padding:0 14px 14px; }
 .file-preview img{ width:100%; border-radius:var(--r-s); display:block; }
+
+/* ---------- шаг после квитанции поверх экрана входа ---------- */
+/* Экран входа под карточкой размыт и не нажимается (inert ставит login.js):
+   после принятой квитанции путь один — в приложение. Оверлей абсолютный,
+   а не fixed: у .page есть transform, и fixed считался бы от неё же. */
+.page.login-focused{ overflow:hidden; }
+.login-step{
+  position:absolute; inset:0; z-index:20;
+  display:flex; flex-direction:column;
+  padding:16px 16px calc(16px + env(safe-area-inset-bottom));
+  overflow-y:auto; overscroll-behavior:contain; scrollbar-width:none;
+  background:var(--bg-overlay);
+  -webkit-backdrop-filter:blur(16px) saturate(1.1); backdrop-filter:blur(16px) saturate(1.1);
+  animation:login-step-in .22s ease both;
+}
+/* margin-top:auto, а не justify-content:flex-end: длинная карточка
+   при flex-end уезжает верхом за край и не прокручивается */
+.login-step > *{
+  width:100%; max-width:480px; flex-shrink:0;
+  /* !important: у карточек шагов inline margin-top:0 */
+  margin:auto auto 0 !important;
+  box-shadow:0 18px 48px rgba(0,0,0,.22);
+}
+@keyframes login-step-in{ from{ opacity:0; } to{ opacity:1; } }
+@media (prefers-reduced-motion: reduce){ .login-step{ animation:none; } }
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  .page.login-focused > :not(.login-step){ filter:blur(6px); opacity:.4; }
+}
+
+/* ---------- оплата: переход в банк (pay.js) ---------- */
+.pay-sheet{ text-align:center; padding:4px 4px 0; }
+.pay-sheet-kind{ font-size:13px; color:var(--tx-2); }
+.pay-sheet-sum{ font-size:34px; font-weight:700; letter-spacing:-.03em; color:var(--tx-strong); margin-top:2px; font-variant-numeric:tabular-nums; }
+.pay-sheet-to{ font-size:14px; color:var(--tx-2); margin-top:2px; }
+.pay-sheet-title{ font-size:20px; font-weight:700; letter-spacing:-.02em; color:var(--tx-strong); }
+.pay-qr{
+  display:block; width:200px; height:200px; margin:16px auto 4px;
+  border-radius:var(--r-s); background:#fff; padding:6px; image-rendering:pixelated;
+  box-shadow:0 0 0 1px var(--sep-soft);
+}
+.pay-steps{ text-align:left; margin:12px 0 0; padding-left:22px; font-size:14px; color:var(--tx); line-height:1.5; }
+.pay-steps-note{ font-size:14px; color:var(--tx-2); margin-top:8px; line-height:1.45; }
+.pay-sheet .btn-primary{ margin-top:16px; }
+.pay-sheet .btn-primary + .btn-primary{ margin-top:10px; }
+
+.pay-count{
+  width:72px; height:72px; margin:4px auto 12px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--brand); color:#fff; font-size:32px; font-variant-numeric:tabular-nums;
+}
+
+.pay-bank-grid{ display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px 6px; margin-top:16px; }
+.pay-bank-tile{ display:flex; flex-direction:column; align-items:center; gap:6px; padding:6px 2px; border-radius:var(--r-s); }
+.pay-bank-tile:active, .pay-bank-row:active{ background:var(--press); }
+.pay-bank-tile .pay-bank-name{ font-size:11px; line-height:1.2; color:var(--tx); text-align:center; }
+.pay-bank-logo{
+  position:relative; overflow:hidden;
+  width:48px; height:48px; border-radius:14px; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--fade); color:var(--tx-2); font-size:18px; font-weight:700;
+}
+.pay-bank-logo img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+.pay-bank-search{
+  width:100%; margin:16px 0 6px; padding:11px 14px; border:1.5px solid transparent; border-radius:var(--r-s);
+  font:inherit; font-size:16px; color:var(--tx-strong); background:var(--fade-2); outline:none;
+}
+.pay-bank-search:focus{ border-color:var(--accent); }
+.pay-bank-list{ text-align:left; }
+.pay-bank-row{ display:flex; align-items:center; gap:12px; width:100%; padding:8px 4px; border-radius:var(--r-xs); }
+.pay-bank-row .pay-bank-logo{ width:36px; height:36px; border-radius:10px; font-size:15px; }
+.pay-bank-row .pay-bank-name{ font-size:15px; color:var(--tx); }
+.pay-bank-row[hidden], .pay-bank-tile[hidden]{ display:none; }
+
+/* ---------- вызов мастера (screens/master.js) ---------- */
+.master-item{ width:100%; text-align:left; }
+/* Цвета сервисов — узнаются раньше, чем прочитана надпись */
+.btn-primary.master-avito{ background:#00AAFF; }
+.btn-primary.master-yandex{ background:#FC3F1D; margin-top:10px; }
+
+/* ---------- контакт в объявлении соседа ---------- */
+.share-toggle{
+  display:flex; align-items:center; gap:12px; width:100%; text-align:left;
+  padding:12px 14px; background:var(--bg-card);
+}
+.share-toggle-text{ flex:1; min-width:0; }
+.share-toggle-text .t{ display:block; font-size:15px; color:var(--tx); }
+.share-toggle-text .d{ display:block; font-size:13px; color:var(--tx-2); margin-top:2px; }
+.dt-card a.btn-primary{ text-decoration:none; }
+.dt-card .btn-primary + .btn-primary{ margin-top:10px; }

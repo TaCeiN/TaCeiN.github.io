@@ -207,10 +207,14 @@ export async function renderPost(state, { id }) {
     <div class="dt-meta">${esc(p.categoryLabel)} · ${esc(p.author)} · ${esc(formatDate(p.publishedAt))}</div>
     <div class="dt-p">${esc(p.body).replace(/\n/g, '<br>')}</div>
 
-    ${p.contact ? html`
+    ${!p.mine && (p.phone || p.maxUsername || p.contact) ? html`
       <div class="dt-card">
         <div class="pay-label">Как связаться</div>
-        <div class="dt-p" style="margin-top:6px">${esc(p.contact)}</div>
+        ${p.contact ? html`<div class="dt-p" style="margin-top:6px">${esc(p.contact)}</div>` : ''}
+        ${p.phone ? html`
+          <a class="btn-primary" href="tel:${esc(p.phone)}">Позвонить · ${esc(formatPhone(p.phone))}</a>
+          <button class="btn-primary secondary" data-action="post-write"
+                  data-username="${esc(p.maxUsername ?? '')}" data-title="${esc(p.title)}">Написать в MAX</button>` : ''}
       </div>` : ''}
 
     ${p.type === 'resident' ? html`
@@ -251,11 +255,23 @@ export function renderPostForm() {
     <div id="postPhotoName" class="file-chosen">Необязательно</div>
 
     <div class="field-label">Как с вами связаться</div>
-    <input type="text" id="postContact" placeholder="Телефон, квартира или время, когда удобно">
+    <!--
+      Переключатель, а не поле: соседу нужна кнопка «Позвонить», а не номер,
+      который надо переписывать. Телефон — подтверждённый MAX, его нельзя
+      вписать чужой.
+    -->
+    <button type="button" class="list share-toggle" data-action="post-share-toggle" aria-pressed="false" id="postShare">
+      <span class="share-toggle-text">
+        <span class="t">Показать мой телефон соседям</span>
+        <span class="d">Соседи смогут позвонить или написать вам в MAX</span>
+      </span>
+      <span class="toggle"><span class="knob"></span></span>
+    </button>
+    <input type="text" id="postContact" placeholder="Или напишите: квартира, когда удобно" style="margin-top:10px">
 
     <div class="dt-p" style="color:var(--tx-2);font-size:13px">
-      Объявление увидят только жители вашего дома. Указывайте лишь те
-      контакты, которые готовы им показать.
+      Объявление увидят только жители вашего дома. Показывайте лишь те
+      контакты, которые готовы им доверить.
     </div>
 
     <button class="btn-primary" data-action="submit-post">Разместить</button>`;
@@ -441,6 +457,54 @@ export async function handleHouseAction(action, target, ctx) {
       return true;
     }
 
+    /**
+     * Показать телефон соседям. Номер — только подтверждённый MAX:
+     * если его ещё нет, MAX спросит разрешение поделиться номером.
+     */
+    case 'post-share-toggle': {
+      const on = target.getAttribute('aria-pressed') !== 'true';
+      if (on && !ctx.state.me?.user?.phoneVerified) {
+        const contact = await platform.requestContact();
+        if (!contact) {
+          toast(platform.inMax
+            ? 'Без номера телефона соседи смогут связаться только по тексту ниже'
+            : 'Поделиться телефоном можно в приложении внутри MAX');
+          return true;
+        }
+        try {
+          await api.verifyPhone(contact);
+          await ctx.refreshMe();
+        } catch (error) {
+          toast(error.message);
+          return true;
+        }
+      }
+      target.setAttribute('aria-pressed', String(on));
+      target.querySelector('.toggle')?.classList.toggle('on', on);
+      return true;
+    }
+
+    /**
+     * Написать автору в MAX.
+     *
+     * Ссылки на личный диалог по id или телефону у MAX нет
+     * (dev.max.ru/help/deeplinks). Есть ник — открываем профиль, а готовое
+     * сообщение копируем. Ника нет — «Отправить в MAX» с вписанным текстом,
+     * получателя человек выбирает сам: телефон автора показан рядом.
+     */
+    case 'post-write': {
+      const message = `Здравствуйте! Пишу по поводу вашего объявления «${target.dataset.title}» из приложения «Домовой».`;
+      const username = target.dataset.username;
+      if (username) {
+        try { await navigator.clipboard?.writeText(message); } catch { /* буфер недоступен */ }
+        toast('Сообщение скопировано — вставьте его в чат');
+        platform.openMaxLink(`https://max.ru/${encodeURIComponent(username)}`);
+      } else {
+        platform.openMaxLink(`https://max.ru/:share?text=${encodeURIComponent(message)}`);
+      }
+      return true;
+    }
+
     case 'submit-post': {
       const title = document.querySelector('#postTitle');
       const body = document.querySelector('#postBody');
@@ -456,6 +520,7 @@ export async function handleHouseAction(action, target, ctx) {
             title: title.value.trim(),
             body: body.value.trim(),
             contact: contact?.value.trim(),
+            sharePhone: document.querySelector('#postShare')?.getAttribute('aria-pressed') === 'true',
           });
 
           /**
@@ -503,4 +568,11 @@ function check(input, errorSelector, min, message) {
   }
   if (!ok) input?.focus();
   return ok;
+}
+
+/** +79995072238 → +7 999 507-22-38: номер, который читается вслух */
+function formatPhone(phone) {
+  const digits = String(phone).replace(/\D/g, '');
+  if (digits.length !== 11) return phone;
+  return `+7 ${digits.slice(1, 4)} ${digits.slice(4, 7)}-${digits.slice(7, 9)}-${digits.slice(9)}`;
 }

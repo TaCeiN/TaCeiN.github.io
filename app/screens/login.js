@@ -195,7 +195,31 @@ export function renderLogin(state) {
 
 /** Обработчики экрана входа. Возвращает функцию очистки. */
 export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
+  /**
+   * Шаг после квитанции — поверх размытого экрана входа.
+   *
+   * Карточки «расскажите о себе», адрес и «заявка отправлена» рисовались
+   * посреди экрана, а под ними оставались «Сфотографировать квитанцию»,
+   * «Где искать QR-код» и код приглашения. Человек, у которого квитанция
+   * уже принята, читал их как следующий шаг и сканировал заново. Теперь
+   * всё, кроме карточки, размыто и не нажимается: путь один — вперёд,
+   * в приложение.
+   */
+  const focusStep = (on) => {
+    const box = root.querySelector('#loginError');
+    const page = box?.parentElement;
+    if (!box || !page) return;
+    if (on) page.scrollTop = 0;
+    page.classList.toggle('login-focused', on);
+    box.classList.toggle('login-step', on);
+    for (const el of page.children) {
+      if (el !== box) el.inert = on;
+    }
+    if (on) box.scrollTop = 0;
+  };
+
   const showError = (error) => {
+    focusStep(false);
     const box = root.querySelector('#loginError');
     if (box) box.innerHTML = errorState(error);
   };
@@ -329,6 +353,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
     // Пустая строка — у объекта нет квартиры, второй раз не спрашиваем
     pendingNeedsFlat = result.flat !== '';
 
+    focusStep(true);
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
         <div class="meter-name">Заявка принята</div>
@@ -367,6 +392,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
     const box = root.querySelector('#loginError');
     if (!box) return;
 
+    focusStep(false);
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
         <div class="meter-name">Вход работает внутри MAX</div>
@@ -396,6 +422,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
      * одинаковых синих прямоугольника подряд, и непонятно, чем они
      * отличаются. Здесь достаточно объяснить и показать пальцем.
      */
+    focusStep(false);
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
         <div class="meter-name">${esc(title)}</div>
@@ -419,6 +446,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
     const box = root.querySelector('#loginError');
     if (!box) return;
 
+    focusStep(true);
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
         <div class="meter-name">В квитанции нет адреса</div>
@@ -514,6 +542,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
     // Форма адреса покажет их следующим шагом — терять незачем
     regionMissingInfo = info ?? null;
 
+    focusStep(true);
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
         <div class="meter-name">Не удалось определить ваш регион</div>
@@ -629,6 +658,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
     const canAskUk = claim?.deciders?.dispatcher === true;
     const canAskOperator = claim?.houseManagement?.canAskOperator === true;
 
+    focusStep(true);
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
         <div class="meter-name">Заявка отправлена</div>
@@ -642,6 +672,18 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
                  организации в сервисе — подтвердить доступ к соседям некому.`}
           Повторно сканировать квитанцию не нужно — приложение вас запомнило.
         </div>
+
+        <!-- Вход в приложение — первым: подтверждения ждать не нужно,
+             и всё остальное на этой карточке вторично -->
+        <button class="btn-primary" data-action="enter-app">
+          Перейти в приложение
+        </button>
+        <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
+          Начисления, счётчики, аналитика и обращение в управляющую компанию
+          по этой квартире работают уже сейчас — ждать подтверждения для них
+          не нужно.
+        </div>
+
         ${!decides && canAskOperator ? askOperatorBlock(claim ?? {}) : ''}
 
         <div class="field-label">Что ушло председателю</div>
@@ -652,17 +694,9 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
           ${claim?.claimNote ? claimRow('О себе', claim.claimNote) : ''}
         </div>
 
-        <button class="btn-primary" data-action="enter-app">
-          Перейти в приложение
-        </button>
         <button class="btn-primary secondary" data-action="withdraw-claim">
           Отозвать заявку
         </button>
-        <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
-          Начисления, счётчики, аналитика и обращение в управляющую компанию
-          по этой квартире работают уже сейчас — ждать подтверждения для них
-          не нужно.
-        </div>
       </div>`;
   }
 
@@ -688,6 +722,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
     const box = root.querySelector('#loginError');
     if (!box) return;
 
+    focusStep(true);
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
         <div class="meter-name">Отозвать заявку?</div>
@@ -937,6 +972,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
           else {
             root.querySelector('#scanActions')?.removeAttribute('hidden');
             root.querySelector('#loginLead')?.removeAttribute('hidden');
+            focusStep(false);
             const box = root.querySelector('#loginError');
             if (box) box.innerHTML = '';
           }

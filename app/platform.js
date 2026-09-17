@@ -177,6 +177,71 @@ export const platform = {
   },
 
 
+  /**
+   * Открыть ссылку системой телефона, а не внутри мини-приложения.
+   *
+   * Нужна для перехода в приложение банка по схеме `bank100000000111://`:
+   * вебвью мессенджера такие ссылки открывать не обязан, а мост MAX
+   * отдаёт адрес самому телефону. Вне MAX — обычный переход.
+   */
+  openLink(url) {
+    const b = bridge();
+    if (this.inMax && b?.openLink) {
+      try {
+        b.openLink(url);
+        return;
+      } catch { /* ниже — обычный переход */ }
+    }
+    window.location.href = url;
+  },
+
+  /**
+   * Открыть ссылку внутри MAX: профиль по нику, «Отправить в MAX».
+   * Мост открывает в мессенджере только адреса `https://max.ru/…`,
+   * остальные — во внешнем браузере. Вне MAX — новая вкладка.
+   */
+  openMaxLink(url) {
+    const b = bridge();
+    if (this.inMax && b?.openMaxLink) {
+      try {
+        b.openMaxLink(url);
+        return;
+      } catch { /* ниже — обычный переход */ }
+    }
+    window.open(url, '_blank', 'noopener');
+  },
+
+  /**
+   * Сохранить файл на телефон.
+   *
+   * В MAX — нативное скачивание по ссылке: картинку из памяти страницы мост
+   * не принимает, поэтому `url` — адрес, который открывается без сессии.
+   * В браузере — скачивание через ссылку с атрибутом download.
+   * Возвращает true, если сохранение запущено.
+   */
+  async downloadFile(url, fileName) {
+    const b = bridge();
+    if (this.inMax && b?.downloadFile) {
+      try {
+        await b.downloadFile(url, fileName);
+        return true;
+      } catch { /* ниже — браузерный путь */ }
+    }
+    try {
+      const blob = await (await fetch(url)).blob();
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
   /** Реальная высота вьюпорта внутри вебвью. */
   async viewportHeight() {
     try {

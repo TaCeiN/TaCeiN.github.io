@@ -567,11 +567,19 @@ function billRow(b) {
         </div>
         <div class="d">${esc(b.provider ?? '')}</div>
       </div>
-      <button class="pay-quickbtn tappable"
-              style="${paid ? '' : 'background:var(--accent);color:#fff'}"
-              data-action="mark-paid" data-id="${esc(b.id)}" data-paid="${paid ? '0' : '1'}">
-        ${paid ? 'Снять' : 'Оплатил'}
-      </button>
+      <!--
+        «Оплатить» ведёт в банк (pay.js), а отметка ставится после возврата
+        вопросом «Оплата прошла?». Галочки «Оплатил» здесь больше нет —
+        снять ошибочную отметку можно.
+      -->
+      ${paid ? html`
+        <button class="pay-quickbtn tappable"
+                data-action="mark-paid" data-id="${esc(b.id)}" data-paid="0">Снять</button>` : html`
+        <button class="pay-quickbtn tappable" style="background:var(--accent);color:#fff"
+                data-action="pay-bill" data-id="${esc(b.id)}" data-sum="${esc(b.sum)}"
+                data-sum-kopecks="${esc(b.sumKopecks)}" data-provider="${esc(b.provider ?? '')}"
+                data-service-label="${esc(b.serviceLabel ?? '')}" data-period-label="${esc(b.periodLabel ?? '')}"
+                data-has-qr="${b.hasQr ? 'true' : 'false'}">Оплатить</button>`}
     </div>`;
 }
 

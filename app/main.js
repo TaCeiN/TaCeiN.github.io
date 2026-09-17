@@ -36,6 +36,8 @@ import {
   renderCouncilPolls, renderCouncilPollForm, handleCouncilPollsAction,
 } from './screens/council-polls.js';
 import { readTheme, applyTheme } from './theme.js';
+import { handlePayAction, initPayReturn } from './pay.js';
+import { renderMaster, handleMasterAction } from './screens/master.js';
 
 /**
  * Оболочка приложения: загрузка, экраны, тема.
@@ -373,9 +375,11 @@ async function renderScreen(name, params = {}, nav = { kind: 'none', scroll: 0 }
       case 'request':
         put(await renderRequestDetail(params.id));
         break;
-      case 'complaint':
       case 'master':
-        put(renderComplaintForm(state, name === 'master' ? 'master' : 'complaint'));
+        put(renderMaster(state));
+        break;
+      case 'complaint':
+        put(renderComplaintForm(state, 'complaint', { category: params?.category, text: params?.text }));
         // Не терять заполненную форму при случайном закрытии мини-аппа
         platform.guardClosing(true);
         state.cleanup = () => platform.guardClosing(false);
@@ -559,6 +563,8 @@ async function handleAction(action, target) {
   if (await handleMeterAction(action, target, ctx)) return;
   if (await handleHouseAction(action, target, ctx)) return;
   if (await handleProfileAction(action, target, ctx)) return;
+  if (await handlePayAction(action, target, ctx)) return;
+  if (await handleMasterAction(action, target, ctx)) return;
 
   switch (action) {
     case 'back':
@@ -797,9 +803,6 @@ async function handleAction(action, target) {
       if (!state.currentProperty) return;
       return go('add-receipt', { id: state.currentProperty.propertyId });
     }
-
-    case 'pay':
-      return go('payment');
 
     default:
       if (NAVIGATE[action]) {
@@ -1114,6 +1117,9 @@ function start() {
   document.querySelectorAll('.apptab').forEach((tab) => {
     tab.addEventListener('click', () => reset(tab.dataset.tab));
   });
+
+  // Вернулся из приложения банка — спросить, прошла ли оплата
+  initPayReturn();
 
   boot();
 }

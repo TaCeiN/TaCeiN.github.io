@@ -512,7 +512,11 @@ function addresseeLine(hm) {
     </div>`;
 }
 
-export function renderComplaintForm(state, kind = 'complaint') {
+/**
+ * `prefill` — категория и текст, когда жалобу открывают с другого экрана:
+ * «Вызов мастера» ведёт сюда, если сломано общее имущество.
+ */
+export function renderComplaintForm(state, kind = 'complaint', prefill = {}) {
   const property = state.currentProperty;
   const isMaster = kind === 'master';
 
@@ -537,7 +541,7 @@ export function renderComplaintForm(state, kind = 'complaint') {
     <div class="field-label" style="margin-top:2px">Категория</div>
     <div class="chips" id="catChips">
       ${CATEGORIES.map((c, i) => html`
-        <span class="chip ${i === 1 ? 'sel' : ''}" data-action="pick-cat" data-v="${esc(c)}">${esc(c)}</span>
+        <span class="chip ${(prefill.category ? c === prefill.category : i === 1) ? 'sel' : ''}" data-action="pick-cat" data-v="${esc(c)}">${esc(c)}</span>
       `).join('')}
     </div>
 
@@ -545,7 +549,7 @@ export function renderComplaintForm(state, kind = 'complaint') {
     <div class="readonly-field">${esc(property?.addressRaw ?? '')}</div>
 
     <div class="field-label">Опишите проблему</div>
-    <textarea id="reqDesc" placeholder="Например: течёт труба под раковиной на кухне, вода идёт на пол"></textarea>
+    <textarea id="reqDesc" placeholder="Например: течёт труба под раковиной на кухне, вода идёт на пол">${esc(prefill.text ?? '')}</textarea>
     <div class="field-error" id="reqDescErr"></div>
 
     ${isMaster ? html`
