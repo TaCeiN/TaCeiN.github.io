@@ -5,7 +5,8 @@ import {
 } from '../ui.js';
 import { readTheme, applyTheme } from '../theme.js';
 import { activePropertyStore } from '../config.js';
-import { shortAddress, propertyTitle, waitingText } from './home.js';
+import { shortAddress, propertyTitle, waitingText, waitingHint } from './home.js';
+import { telHref } from './requests.js';
 
 /**
  * Профиль, адреса, доступ к адресу, оплата и аварийные службы.
@@ -213,15 +214,15 @@ export function renderProperties(state) {
               <div class="t">${esc(propertyTitle(p))}</div>
               <div class="d">
                 ${esc(accountsLine(p))}
-                ${p.bill?.sumKopecks != null ? ` · ${esc(money(p.bill.sumKopecks))}` : ''}
+                <!-- То же число, что на главной: две суммы про одну
+                     квартиру человек не простит, и правой сочтёт бóльшую -->
+                ${p.bill?.hasBills
+                  ? ` · ${esc(money(p.bill.outstandingKopecks))}`
+                  : ''}
               </div>
               ${p.status === 'pending' ? html`
                 <div class="d" style="color:var(--amber-deep)">
-                  ${p.deciders?.chairman
-                    ? 'Доступ к дому и соседям подтверждает председатель совета дома'
-                    : p.deciders?.dispatcher
-                      ? 'У дома пока нет председателя — попросите УК его назначить'
-                      : 'У дома пока нет ни председателя, ни доступного кабинета УК'}
+                  ${esc(waitingHint(p))}
                 </div>` : ''}
               ${p.addressSource === 'resident' ? `
                 <div class="d" style="color:var(--amber-deep)">
@@ -580,13 +581,60 @@ function capitaliseFirst(value) {
 
 /* ─────────────── аварийные службы ─────────────── */
 
-const EMERGENCY = [
-  { title: 'Аварийная служба УК', hint: 'Круглосуточно', phone: '+7 495 000-00-00' },
+/**
+ * Аварийные службы.
+ *
+ * САМЫЙ ОПАСНЫЙ ЭКРАН ПРИЛОЖЕНИЯ, и до 11 сентября он не работал дважды.
+ *
+ * Первое: все три строки были кнопками с действием «позвонить», а обработчик
+ * показывал тост «Звоним: 112» и НЕ НАБИРАЛ НОМЕР. Человек с запахом газа
+ * нажимал «112», читал надпись и ждал соединения, которого не будет.
+ * Теперь это `<a href="tel:">` — набор делает система, наш код в этом
+ * не участвует вовсе и сломать его больше нечем.
+ *
+ * Второе: строка «Аварийная служба УК · +7 495 000-00-00» — выдуманный
+ * номер в приложении, чьё правило «данные — только настоящие». Теперь
+ * телефон берётся из реестра (`ukPhone` активной квартиры), а когда его
+ * там нет — строки нет. На аварийном экране пустая строка безопаснее
+ * выдуманной: по выдуманной звонят.
+ *
+ * 112 и 104 — настоящие федеральные номера, они остаются всегда.
+ */
+const EMERGENCY_FEDERAL = [
   { title: 'Единая служба спасения', hint: 'Пожар, газ, угроза жизни', phone: '112' },
   { title: 'Аварийная газовая служба', hint: 'Запах газа', phone: '104' },
 ];
 
+function emergencyRow(e) {
+  return html`
+    <a class="row tappable" href="tel:${esc(telHref(e.phone))}">
+      <span class="sq bad-soft">
+        <svg viewBox="0 0 20 20" fill="none"><path d="M4 5.5C4 4.7 4.7 4 5.5 4H7L8.2 7L6.8 8.2C7.6 10 9 11.4 10.8 12.2L12 10.8L15 12V13.5C15 14.3 14.3 15 13.5 15C8.3 15 4 10.7 4 5.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+      </span>
+      <div class="content">
+        <div class="t">${esc(e.title)}</div>
+        <div class="d">${esc(e.hint)} · ${esc(e.phone)}</div>
+      </div>
+    </a>`;
+}
+
 export function renderEmergency(state) {
+  const property = state.currentProperty;
+
+  /**
+   * Телефон управляющей организации — только настоящий, из реестра.
+   * Названия «Аварийная служба УК» не пишем: в реестре лежит общий
+   * телефон организации, а не её аварийной службы, и обещать
+   * круглосуточность мы не можем.
+   */
+  const org = property?.ukPhone
+    ? [{
+        title: property.ukName ? `Управляющая организация: ${property.ukName}` : 'Управляющая организация',
+        hint: 'Телефон из реестра',
+        phone: property.ukPhone,
+      }]
+    : [];
+
   return html`
     <div class="dt-p" style="margin-top:2px">
       Если есть угроза жизни, залив соседей или запах газа — звоните,
@@ -594,17 +642,14 @@ export function renderEmergency(state) {
     </div>
 
     <div class="list" style="margin-top:14px">
-      ${EMERGENCY.map((e) => html`
-        <button class="row tappable" data-action="call" data-phone="${esc(e.phone)}">
-          <span class="sq bad-soft">
-            <svg viewBox="0 0 20 20" fill="none"><path d="M4 5.5C4 4.7 4.7 4 5.5 4H7L8.2 7L6.8 8.2C7.6 10 9 11.4 10.8 12.2L12 10.8L15 12V13.5C15 14.3 14.3 15 13.5 15C8.3 15 4 10.7 4 5.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-          </span>
-          <div class="content">
-            <div class="t">${esc(e.title)}</div>
-            <div class="d">${esc(e.hint)} · ${esc(e.phone)}</div>
-          </div>
-        </button>`).join('')}
+      ${[...EMERGENCY_FEDERAL, ...org].map(emergencyRow).join('')}
     </div>
+
+    ${org.length === 0 ? html`
+      <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
+        Телефона вашей управляющей организации у нас нет — его не оказалось
+        в реестре. Он напечатан на квитанции.
+      </div>` : ''}
 
     <button class="btn-primary" data-action="complaint" style="margin-top:16px">
       Оформить аварийную заявку
@@ -754,6 +799,17 @@ export async function handleProfileAction(action, target, ctx) {
         try {
           await api.markPaid(target.dataset.id, target.dataset.paid === '1');
           platform.haptic('light');
+          /**
+           * Профиль перечитываем обязательно, а не только этот экран.
+           *
+           * С 2 сентября сумма на главной и в переключателе квартир —
+           * это «всё, что не отмечено оплаченным», то есть она зависит
+           * от отметки, которую человек ставит прямо здесь. Раньше там
+           * стояло начисление за месяц, на отметки не реагировавшее,
+           * и одного ctx.refresh() хватало. Теперь без refreshMe человек
+           * отмечает оплату, возвращается на главную и видит старую сумму.
+           */
+          await ctx.refreshMe();
           await ctx.refresh();
         } catch (error) {
           toast(error.message);

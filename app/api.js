@@ -192,6 +192,8 @@ export const api = {
   /** Подсказка улиц загруженного региона: адрес выбирается, а не пишется */
   streets: (region, q) =>
     request('GET', `/api/address/streets?region=${encodeURIComponent(region)}&q=${encodeURIComponent(q)}`),
+  /** Дома выбранной улицы: номер выбирается из списка, а не набирается */
+  houses: (street) => request('GET', `/api/address/houses?street=${encodeURIComponent(street)}`),
   verifyPhone: (contact) => request('POST', '/api/auth/phone', contact),
   approveAccess: (bindingId) => request('POST', `/api/properties/${bindingId}/approve`, {}),
   revokeAccess: (bindingId) => request('POST', `/api/properties/${bindingId}/revoke`, {}),
@@ -250,7 +252,14 @@ export const api = {
     return response.blob();
   },
 
-  attachFile: async (requestId, file) => {
+  /**
+   * Отправка файла с сессией.
+   *
+   * Заголовки те же, что у обычных запросов, но тело — FormData, и
+   * `content-type` ставит браузер: указать его руками нельзя, иначе
+   * потеряется граница multipart.
+   */
+  uploadFile: async (path, file, failure) => {
     const body = new FormData();
     body.append('file', file, file.name);
 
@@ -260,19 +269,30 @@ export const api = {
     const token = tokenStore.get();
     if (token) headers.Authorization = `Bearer ${token}`;
 
-    const response = await fetch(`${API_BASE}/api/requests/${requestId}/files`, {
+    const response = await fetch(API_BASE + path, {
       method: 'POST', headers, credentials: 'same-origin', body,
     });
 
     const text = await response.text();
     const parsed = text ? JSON.parse(text) : null;
     if (!response.ok) {
-      throw new ApiError(parsed?.message ?? 'Не удалось приложить файл', {
+      throw new ApiError(parsed?.message ?? failure, {
         status: response.status, code: parsed?.error ?? 'http_error', body: parsed,
       });
     }
     return parsed;
   },
+
+  attachFile: (requestId, file) => api.uploadFile(
+    `/api/requests/${requestId}/files`, file, 'Не удалось приложить файл',
+  ),
+
+  /** Объявление прочитано: отметка ставится на открытии карточки */
+  markPostRead: (postId) => request('POST', `/api/posts/${postId}/read`),
+
+  attachPostPhoto: (postId, file) => api.uploadFile(
+    `/api/posts/${postId}/photo`, file, 'Не удалось приложить фотографию',
+  ),
 
   /**
    * scope: 'house' — объявления дома (УК и председатель),

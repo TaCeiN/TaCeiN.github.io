@@ -270,3 +270,63 @@ export function confirmAction({ title, text = '', confirmLabel = 'Продолж
     host.querySelector('.confirm-no').focus();
   });
 }
+
+/* ─────────────── шторка ─────────────── */
+
+/**
+ * Шторка снизу с произвольным содержимым.
+ *
+ * Классы берём у шторки выбора даты — dp-backdrop и dp-sheet. Они уже
+ * оформлены в обеих версиях дизайна, в new вместе с ручкой-хватом,
+ * и вторая шторка со своими стилями разошлась бы с первой при первой
+ * же правке.
+ *
+ * Кнопки внутри работают через общее делегирование кликов на document
+ * (main.js), поэтому шторка живёт в body, вне контейнера экранов.
+ * Закрывается фоном, кнопкой «Закрыть», клавишей Escape и любым
+ * переходом на другой экран — последнее делает renderScreen.
+ *
+ * Высота ограничена с прокруткой: содержимое бывает длинным
+ * (объяснение, «Подключить дом», поле кода), а на маленьком телефоне
+ * без потолка нижние кнопки уезжали бы за край экрана.
+ */
+let sheetKeydown = null;
+
+export function openSheet(markup, label) {
+  let host = document.querySelector('#appSheet');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'appSheet';
+    document.body.appendChild(host);
+  }
+
+  host.innerHTML = html`
+    <div class="dp-backdrop" data-action="sheet-close"></div>
+    <div class="dp-sheet" role="dialog" aria-modal="true" aria-label="${esc(label)}"
+         style="max-height:88dvh;overflow-y:auto">
+      ${markup}
+      <div class="dp-foot">
+        <button type="button" class="dp-cancel" data-action="sheet-close">Закрыть</button>
+      </div>
+    </div>`;
+  document.body.classList.add('dp-locked');
+
+  if (!sheetKeydown) {
+    sheetKeydown = (event) => { if (event.key === 'Escape') closeSheet(); };
+    document.addEventListener('keydown', sheetKeydown);
+  }
+
+  // Фокус на кнопку, а не на поле: поле на телефоне сразу выдвинуло бы клавиатуру
+  host.querySelector('.dp-sheet button')?.focus({ preventScroll: true });
+}
+
+export function closeSheet() {
+  const host = document.querySelector('#appSheet');
+  if (!host || !host.innerHTML) return;
+  host.innerHTML = '';
+  document.body.classList.remove('dp-locked');
+  if (sheetKeydown) {
+    document.removeEventListener('keydown', sheetKeydown);
+    sheetKeydown = null;
+  }
+}

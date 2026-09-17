@@ -6,7 +6,9 @@ import { slotText } from '../app/screens/requests.js';
 import { handleDateAction } from '../app/datepicker.js';
 import {
   postForm, readPostForm, postList, pollForm, readPollForm, pollList,
+  showPickedPhoto, pickedPostPhoto,
 } from '../app/house-admin.js';
+import { renderNav, setSignedIn, searchBar, enterSearch, pageHead } from './nav.js';
 import { API_BASE } from '../app/config.js';
 
 /**
@@ -74,6 +76,33 @@ class ApiError extends Error {
   }
 }
 
+/**
+ * Отправка файла с сессией кабинета.
+ *
+ * Тело — FormData, и `content-type` ставит браузер: указать его руками
+ * нельзя, иначе потеряется граница multipart.
+ */
+async function upload(path, file) {
+  const token = tokenStore.get();
+  const body = new FormData();
+  body.append('file', file, file.name);
+
+  const response = await fetch(API_BASE + path, {
+    method: 'POST',
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body,
+  }).catch(() => {
+    throw new ApiError('Нет связи с сервером. Проверьте подключение.', 0, null);
+  });
+
+  const text = await response.text();
+  const parsed = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    throw new ApiError(parsed?.message ?? 'Не удалось приложить фотографию', response.status, parsed);
+  }
+  return parsed;
+}
+
 async function request(method, path, payload) {
   const token = tokenStore.get();
   const response = await fetch(API_BASE + path, {
@@ -123,6 +152,7 @@ const api = {
     limit ? `/api/dispatcher/posts?limit=${encodeURIComponent(limit)}` : '/api/dispatcher/posts',
   ),
   createPost: (payload) => request('POST', '/api/dispatcher/posts', payload),
+  attachPostPhoto: (id, file) => upload(`/api/dispatcher/posts/${id}/photo`, file),
   removePost: (id) => request('DELETE', `/api/dispatcher/posts/${id}`),
   polls: () => request('GET', '/api/dispatcher/polls'),
   createPoll: (payload) => request('POST', '/api/dispatcher/polls', payload),
@@ -247,23 +277,20 @@ function renderLogin(error) {
 }
 
 const TABS = [
-  { id: 'requests', label: 'Заявки' },
-  { id: 'claims', label: 'Ждут председателя' },
-  { id: 'posts', label: 'Объявления дома' },
-  { id: 'polls', label: 'Опросы' },
-  { id: 'chairmen', label: 'Председатели' },
-  { id: 'accounts', label: 'Лицевые счета' },
-  { id: 'houses', label: 'Мои дома' },
+  { id: 'requests', label: 'Заявки', icon: 'wrench', tone: 'blue' },
+  { id: 'claims', label: 'Ждут председателя', icon: 'inbox', tone: 'orange' },
+  { id: 'posts', label: 'Объявления дома', icon: 'megaphone', tone: 'pink' },
+  { id: 'polls', label: 'Опросы', icon: 'poll', tone: 'violet' },
+  { id: 'chairmen', label: 'Председатели', icon: 'crown', tone: 'orange' },
+  { id: 'accounts', label: 'Лицевые счета', icon: 'wallet', tone: 'teal' },
+  { id: 'houses', label: 'Мои дома', icon: 'house', tone: 'green' },
 ];
 
+/** Меню живёт в боковой панели; вызов оставлен там, где раньше рисовались вкладки */
 function renderTabs() {
-  return html`
-    <div class="dsp-tabs">
-      ${TABS.map((t) => html`
-        <button class="dsp-tab ${state.tab === t.id ? 'on' : ''}"
-                data-action="tab" data-v="${t.id}">${esc(t.label)}</button>
-      `).join('')}
-    </div>`;
+  const overdue = state.data?.counters?.overdue ?? 0;
+  renderNav('#dspNav', TABS.map((t) => ({ ...t, count: t.id === 'requests' ? overdue : 0 })), state.tab, 'v');
+  return '';
 }
 
 function renderQueue() {
@@ -271,7 +298,7 @@ function renderQueue() {
 
   const counter = (key, label, value, warn) => html`
     <button class="dsp-counter ${warn ? 'warn' : ''} ${state.filter === key ? 'on' : ''}"
-            data-action="filter" data-v="${key ?? ''}">
+            data-action="filter" data-v="${key ?? ''}" aria-pressed="${state.filter === key}">
       <div class="n">${value}</div>
       <div class="l">${esc(label)}</div>
     </button>`;
@@ -279,13 +306,14 @@ function renderQueue() {
   const total = state.data.total ?? requests.length;
 
   return renderTabs() + html`
-    <div class="dsp-search">
-      <input type="search" id="dspQ" value="${esc(state.query)}"
-             placeholder="Номер, адрес или квартира">
-      <button class="dsp-act primary" data-action="search">Найти</button>
-      ${state.query
-        ? '<button class="dsp-act" data-action="search-reset">Сбросить</button>'
-        : ''}
+    <div class="dsp-page-head">
+      <div>
+        <h1>Заявки</h1>
+        <p class="dsp-dim">Всего ${counters.total} · сначала просроченные</p>
+      </div>
+      <div class="dsp-page-search">
+        ${searchBar({ id: 'dspQ', value: state.query, placeholder: 'Номер, адрес или квартира', action: 'search', reset: 'search-reset' })}
+      </div>
     </div>
 
     <div class="dsp-counters">
@@ -305,7 +333,12 @@ function renderQueue() {
             : 'В этой выборке заявок нет'}
         </div>`
       : html`
-        <div class="dsp-queue">${requests.map(queueRow).join('')}</div>
+        <div class="dsp-queue">
+          <div class="dsp-row head" aria-hidden="true">
+            <span>№ · дата</span><span>Заявка</span><span>Адрес</span><span>Статус</span><span>Срок</span>
+          </div>
+          ${requests.map(queueRow).join('')}
+        </div>
         ${total > requests.length ? html`
           <div class="dsp-more">
             <span class="dsp-dim">Показаны ${requests.length} из ${total}</span>
@@ -358,13 +391,25 @@ function renderDetail(r) {
   const allowed = r.allowed ?? TRANSITIONS[r.status] ?? [];
 
   return html`
-    <a class="dsp-back" data-action="back">← К очереди</a>
+    <button class="dsp-back" data-action="back">← К очереди</button>
+
+    <div class="dsp-card dsp-req-head">
+      <div>
+        <div class="dsp-dim">Заявка № ${esc(r.number)} · ${esc(r.category)} · ${esc(formatDate(r.createdAt))}</div>
+        <h1>${esc(r.title)}</h1>
+        <div class="dsp-dim">${esc(r.address ?? '—')}${r.flat && !/кв\.?\s/i.test(r.address ?? '') ? `, кв. ${esc(r.flat)}` : ''}</div>
+      </div>
+      <div class="dsp-req-state">
+        <span class="pill ${statusTone(r.status)}">${esc(r.statusLabel)}</span>
+        <span class="dsp-sla ${esc(r.sla)}">${esc(r.slaLabel)}</span>
+      </div>
+    </div>
 
     ${r.awaitingUk ? `
       <div class="dsp-banner">
         Житель ответил на уточнение — ход за УК. Ответ ниже, в переписке.
       </div>` : ''}
-    ${r.awaitingResident ? `
+    ${r.awaitingResident && !r.awaitingUk ? `
       <div class="dsp-banner wait">
         Ждём ответа жителя на заданный вопрос. Срок реакции при этом идёт.
       </div>` : ''}
@@ -372,16 +417,34 @@ function renderDetail(r) {
     <div class="dsp-detail">
       <div>
         <div class="dsp-card">
-          <h2>Заявка № ${esc(r.number)}</h2>
-          <div class="dt-title" style="margin-top:0">${esc(r.title)}</div>
-          <div class="dt-p">${esc(r.description)}</div>
+          <h2>Описание</h2>
+          <div class="dt-p" style="margin-top:0">${esc(r.description)}</div>
         </div>
 
+        ${attachmentsCard(r)}
+
         <div class="dsp-card">
-          <h2>Что известно</h2>
+          <h2>Переписка</h2>
+          <div class="timeline">
+            ${(r.events ?? []).map((e) => html`
+              <div class="tl-row ${e.actor === 'resident' ? 'mine' : ''}">
+                <div class="tl-dot-col"><div class="tl-dot"></div><div class="tl-line"></div></div>
+                <div class="tl-body">
+                  <div class="tl-who">${esc(eventAuthor(e))}</div>
+                  <div class="tl-t">${esc(e.text)}</div>
+                  <div class="tl-time">${esc(formatDate(e.at))}</div>
+                </div>
+              </div>`).join('')}
+          </div>
+        </div>
+      </div>
+
+      <div class="dsp-aside">
+        ${statusCard(r, allowed)}
+
+        <div class="dsp-card">
+          <h2>Житель и сроки</h2>
           <dl class="dsp-kv">
-            <dt>Адрес</dt><dd>${esc(r.address ?? '—')}</dd>
-            <dt>Квартира</dt><dd>${esc(r.flat ?? '—')}</dd>
             <dt>Житель</dt><dd>${esc(r.authorName ?? '—')}</dd>
             <dt>Телефон</dt>
             <dd>${r.authorPhone
@@ -403,26 +466,13 @@ function renderDetail(r) {
               не уйдёт — статус он увидит, только открыв приложение.
             </div>`}
         </div>
-
-        ${attachmentsCard(r)}
-
-        <div class="dsp-card">
-          <h2>Переписка</h2>
-          <div class="timeline">
-            ${(r.events ?? []).map((e) => html`
-              <div class="tl-row ${e.actor === 'resident' ? 'mine' : ''}">
-                <div class="tl-dot-col"><div class="tl-dot"></div><div class="tl-line"></div></div>
-                <div class="tl-body">
-                  <div class="tl-who">${esc(eventAuthor(e))}</div>
-                  <div class="tl-t">${esc(e.text)}</div>
-                  <div class="tl-time">${esc(formatDate(e.at))}</div>
-                </div>
-              </div>`).join('')}
-          </div>
-        </div>
       </div>
+    </div>`;
+}
 
-      <div>
+/** Панель смены статуса — первой в правой колонке: ради неё карточку и открывают */
+function statusCard(r, allowed) {
+  return html`
         <div class="dsp-card">
           <h2>Статус — ${esc(r.statusLabel)}</h2>
 
@@ -455,9 +505,7 @@ function renderDetail(r) {
               Житель увидит новый статус сразу, а если приложение открыто
               в MAX — получит сообщение от бота.
             </div>`}
-        </div>
-      </div>
-    </div>`;
+        </div>`;
 }
 
 /**
@@ -467,12 +515,14 @@ function renderDetail(r) {
  * можно было только curl-ом, то есть на практике никак.
  */
 function renderPosts() {
-  return renderTabs() + postForm({ houses: state.houseOptions })
+  return renderTabs() + pageHead('Объявления дома', 'Отключения, собрания и новости — жители увидят их на главном экране')
+    + postForm({ houses: state.houseOptions })
     + postList(state.posts, state.postsTotal, 'posts-more');
 }
 
 function renderPolls() {
-  return renderTabs() + pollForm() + pollList(state.polls);
+  return renderTabs() + pageHead('Опросы', 'Вопрос жителям дома с вариантами ответа')
+    + pollForm() + pollList(state.polls);
 }
 
 /**
@@ -486,7 +536,7 @@ function renderPolls() {
 function renderChairmen() {
   const fresh = state.freshPassword;
 
-  return renderTabs() + html`
+  return renderTabs() + pageHead('Председатели', 'Председатель — житель дома: подтверждает соседей, ведёт объявления и опросы') + html`
     ${fresh ? html`
       <div class="dsp-banner">
         Председателем дома назначен «${esc(fresh.name)}».
@@ -569,12 +619,10 @@ function renderHouses() {
   const data = state.housesData;
   const org = data.organization;
 
-  return renderTabs() + html`
-    ${org ? html`
-      <div class="dsp-banner wait">
-        ${esc(org.name)} · ИНН ${esc(org.inn)}
-        ${org.licenseNumber ? ` · лицензия ${esc(org.licenseNumber)}` : ''}
-      </div>` : ''}
+  return renderTabs() + pageHead(
+    'Мои дома',
+    org ? `${org.name} · ИНН ${org.inn}${org.licenseNumber ? ` · лицензия ${org.licenseNumber}` : ''}` : 'Дома, которые реестр числит за вашей организацией',
+  ) + html`
 
     <div class="dsp-counters">
       <div class="dsp-counter"><div class="n">${data.total}</div><div class="l">Домов в реестре</div></div>
@@ -589,9 +637,9 @@ function renderHouses() {
     <div class="dsp-card">
       <h2>Добавить дом вручную</h2>
       <div class="dsp-hint" style="margin-top:0">
-        Реестр ГИС ЖКХ отдаёт дома не всех организаций, а смена управляющей
-        компании доходит до него неделями. Если вашего дома в списке нет —
-        добавьте его сами, жители сразу попадут к вам.
+        Реестры узнают о смене управляющей компании с опозданием в недели.
+        Если вашего дома в списке нет — добавьте его сами, жители сразу
+        попадут к вам.
       </div>
 
       <div class="field-label">Полный адрес дома</div>
@@ -604,26 +652,27 @@ function renderHouses() {
     </div>
 
     ${data.houses.length === 0
-      ? '<div class="dsp-empty">Домов в реестре нет. Загрузите реестр: npm run registry:import</div>'
+      ? html`<div class="dsp-empty">
+          За вашей организацией в реестре домов нет. Добавьте дом вручную —
+          жители этого дома сразу попадут к вам.
+        </div>`
       : html`
         <div class="dsp-card">
-          <h2>Жилищный фонд</h2>
-          <div class="ha-list">
-            ${data.houses.map((h) => html`
-              <div class="ha-row">
-                <div>
-                  <div class="ha-t">${esc(h.address)}</div>
-                  <div class="ha-d">
-                    ${h.flatCount ? `${esc(h.flatCount)} квартир` : 'число квартир неизвестно'}
-                  </div>
-                </div>
-                <div class="ha-state">
-                  ${h.linkedProperties
-                    ? `<span class="pill ok">жителей: ${esc(h.linkedProperties)}</span>`
-                    : '<span class="pill">никто не пришёл</span>'}
-                </div>
-                <span></span>
-              </div>`).join('')}
+          <h2>Жилищный фонд · ${data.houses.length}</h2>
+          <div class="dsp-table-wrap">
+          <table class="dsp-table">
+            <thead><tr><th>Адрес</th><th>Квартир</th><th>Жители в приложении</th></tr></thead>
+            <tbody>
+              ${data.houses.map((h) => html`
+                <tr>
+                  <td class="dsp-addr-cell">${esc(h.address)}</td>
+                  <td class="dsp-muted-cell">${h.flatCount ? esc(h.flatCount) : '—'}</td>
+                  <td>${h.linkedProperties
+                    ? `<span class="pill ok">${esc(h.linkedProperties)}</span>`
+                    : '<span class="dsp-dim">никто не пришёл</span>'}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
           </div>
         </div>`}`;
 }
@@ -670,7 +719,7 @@ function renderAccounts() {
         : '<span></span>'}
     </div>`;
 
-  return renderTabs() + html`
+  return renderTabs() + pageHead('Лицевые счета', 'Квартиры жителей, их лицевые счета и сверка адресов') + html`
     ${unverified.length ? html`
       <div class="dsp-banner">
         Адресов, указанных жителями и не сверенных с лицевым счётом:
@@ -801,7 +850,7 @@ function renderClaims() {
   const rows = state.claims ?? [];
   const needChairman = state.claimsNeedChairman ?? [];
 
-  return renderTabs() + html`
+  return renderTabs() + pageHead('Ждут председателя', 'Жители, которые отсканировали квитанцию и ждут подтверждения соседей') + html`
     ${needChairman.length ? html`
       <div class="dsp-banner">
         В ${needChairman.length}
@@ -916,8 +965,7 @@ async function openRequest(id) {
 
 function showLogin(error) {
   state.me = null;
-  document.querySelector('#dspWho').textContent = '';
-  document.querySelector('#dspLogout').hidden = true;
+  setSignedIn(null);
   main().innerHTML = renderLogin(error);
 }
 
@@ -930,8 +978,7 @@ async function boot() {
     return showLogin(null);
   }
 
-  document.querySelector('#dspWho').textContent = state.me.name;
-  document.querySelector('#dspLogout').hidden = false;
+  setSignedIn(state.me.name);
   await loadQueue();
 }
 
@@ -1040,6 +1087,10 @@ async function handleAction(action, target) {
       return;
     }
 
+    case 'ha-photo':
+      showPickedPhoto(target);
+      return;
+
     case 'ha-publish': {
       const payload = readPostForm();
       if (!payload) {
@@ -1054,9 +1105,27 @@ async function handleAction(action, target) {
       await withLoading(target, async () => {
         try {
           const result = await api.createPost(payload);
-          toast(result.notified
-            ? `Опубликовано, уведомление ушло ${result.notified} жильцам`
-            : 'Опубликовано');
+
+          /**
+           * Фотография идёт вторым запросом. Не дошла — объявление всё
+           * равно опубликовано: терять написанный текст из-за картинки
+           * нельзя, но и молчать о ней тоже.
+           */
+          const photo = pickedPostPhoto();
+          let photoFailed = '';
+          if (photo && result?.id) {
+            try {
+              await api.attachPostPhoto(result.id, photo);
+            } catch (error) {
+              photoFailed = error.message;
+            }
+          }
+
+          toast(photoFailed
+            ? `Опубликовано, но фотография не приложилась: ${photoFailed}`
+            : result.notified
+              ? `Опубликовано, уведомление ушло ${result.notified} жильцам`
+              : 'Опубликовано');
           await loadSection();
         } catch (error) {
           toast(error.message);
@@ -1281,6 +1350,7 @@ document.addEventListener('change', (event) => {
 // Enter в поле пароля — обычное ожидание от формы входа
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Enter') return;
+  if (enterSearch(event, handleAction)) return;
   const button = document.querySelector('[data-action="do-login"]');
   if (button && document.querySelector('#dspPass')) handleAction('do-login', button);
 });

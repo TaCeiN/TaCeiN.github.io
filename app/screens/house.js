@@ -5,6 +5,7 @@ import {
   moreLine, keepScroll,
 } from '../ui.js';
 import { waitingText } from './home.js';
+import { wipNote } from '../wip.js';
 
 /**
  * Жизнь дома: объявления УК, объявления соседей, опросы.
@@ -90,8 +91,8 @@ export async function renderFeed(state, { category } = {}) {
    */
   const boards = html`
     <div class="segmented" style="margin-bottom:14px">
-      <button class="${isMarket ? '' : 'on'}" data-action="feed">Объявления дома</button>
-      <button class="${isMarket ? 'on' : ''}" data-action="market">Соседи предлагают</button>
+      <button class="${isMarket ? '' : 'on'}" data-action="feed" data-swap="1">Объявления дома</button>
+      <button class="${isMarket ? 'on' : ''}" data-action="market" data-swap="1">Соседи предлагают</button>
     </div>`;
 
   if (posts.length === 0) {
@@ -101,31 +102,64 @@ export async function renderFeed(state, { category } = {}) {
         isMarket ? 'Пока никто ничего не предлагает' : 'Объявлений нет',
         isMarket
           ? 'Здесь соседи по дому продают, отдают и предлагают услуги'
-          : 'Управляющая компания пока ничего не публиковала',
+          // Про УК писать нельзя: у дома с ТСЖ, на непосредственном
+          // управлении или просто с одним председателем её нет вовсе,
+          // а объявления дома ведёт совет
+          : 'Здесь появятся отключения, собрания и новости дома',
       )}
       ${isMarket ? '<button class="btn-primary" data-action="new-post">Разместить объявление</button>' : ''}`;
   }
 
+  /**
+   * Непрочитанные — вверх, прочитанные — под подписью.
+   *
+   * Порядок внутри групп прежний, по дате. Разделитель нужен, чтобы
+   * граница не выглядела сбоем сортировки: без него человек видит,
+   * что после свежего объявления идёт прошлогоднее, и не понимает почему.
+   *
+   * Порядок НЕ переставляется, пока человек в разделе: он открыл
+   * объявление, вернулся — и строка не уехала вниз у него на глазах.
+   * Перестановка происходит при следующем входе в раздел.
+   */
+  const unread = posts.filter((p) => p.unread);
+  const seen = posts.filter((p) => !p.unread);
+
+  const list = unread.length && seen.length
+    ? html`
+      <div class="list">${unread.map(postRow).join('')}</div>
+      <div class="notif-day">Прочитанные</div>
+      <div class="list">${seen.map(postRow).join('')}</div>`
+    : `<div class="list">${posts.map(postRow).join('')}</div>`;
+
   return html`
     ${boards}
-    <div class="list">${posts.map(postRow).join('')}</div>
+    ${list}
     ${moreLine({ shown: posts.length, total, action: 'feed-more' })}
     ${isMarket ? '<button class="btn-primary" data-action="new-post">Разместить объявление</button>' : ''}`;
 }
 
+/**
+ * Строка объявления в списке: иконка категории, заголовок, подпись.
+ * По иконке человек отличает отключение от объявления соседа.
+ */
+const CHEVRON = '<svg width="12" height="12" viewBox="0 0 14 14" fill="none">'
+  + '<path d="M5 3L9 7L5 11" stroke="currentColor" stroke-width="1.6" '
+  + 'stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
 function postRow(p) {
   const tone = p.expired ? '' : CATEGORY_TONE[p.category] ?? '';
+  const meta = html`
+    ${esc(p.categoryLabel)} · ${esc(p.author)} · ${esc(formatDate(p.publishedAt))}
+    ${p.expired ? ' · завершено' : ''}`;
+
   return html`
     <button class="row tappable ${p.expired ? 'faded' : ''}" data-action="post" data-id="${esc(p.id)}">
       <span class="sq ${tone}">${categoryIcon(p.category)}</span>
       <div class="content">
-        <div class="t">${esc(p.title)}</div>
-        <div class="d">
-          ${esc(p.categoryLabel)} · ${esc(p.author)} · ${esc(formatDate(p.publishedAt))}
-          ${p.expired ? ' · завершено' : ''}
-        </div>
+        <div class="t ${p.unread ? 'unread' : ''}">${esc(p.title)}</div>
+        <div class="d">${meta}</div>
       </div>
-      <span class="chev"><svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <span class="chev">${CHEVRON}</span>
     </button>`;
 }
 
@@ -203,6 +237,18 @@ export function renderPostForm() {
     <div class="field-label">Описание</div>
     <textarea id="postBody" placeholder="Что предлагаете, в каком состоянии, на каких условиях"></textarea>
     <div class="field-error" id="postBodyErr"></div>
+
+    <!--
+      Фотография одна: вторая потребовала бы решать, какая из них главная.
+      Сервер её хранит, но лента пока не показывает — см. wip.js.
+    -->
+    <div class="field-label">Фотография</div>
+    ${wipNote('postPhoto')}
+    <label class="btn-primary secondary">
+      Прикрепить фотографию
+      <input type="file" id="postPhoto" hidden accept="image/*" data-action="pick-post-photo">
+    </label>
+    <div id="postPhotoName" class="file-chosen">Необязательно</div>
 
     <div class="field-label">Как с вами связаться</div>
     <input type="text" id="postContact" placeholder="Телефон, квартира или время, когда удобно">
@@ -344,6 +390,11 @@ function pollBody(p) {
 export async function handleHouseAction(action, target, ctx) {
   switch (action) {
     case 'post':
+      /**
+       * Отметку ставим ДО показа, но её неудачу глотаем: карточка
+       * обязана открыться в любом случае — она важнее отметки.
+       */
+      api.markPostRead(target.dataset.id).catch(() => {});
       await ctx.show('post', { id: target.dataset.id });
       return true;
 
@@ -355,6 +406,22 @@ export async function handleHouseAction(action, target, ctx) {
     case 'new-post':
       await ctx.show('new-post');
       return true;
+
+    /**
+     * Поля выбора файла шлют `change`, а не `click` — оба слушателя
+     * стоят в main.js. Здесь только показываем, что выбрано: без этого
+     * кнопка выглядит нажатой впустую.
+     */
+    case 'pick-post-photo': {
+      const name = document.querySelector('#postPhotoName');
+      const file = target.files?.[0];
+      if (name) {
+        name.textContent = file
+          ? file.name
+          : 'Необязательно';
+      }
+      return true;
+    }
 
     case 'poll':
       await ctx.show('poll', { id: target.dataset.id });
@@ -384,14 +451,34 @@ export async function handleHouseAction(action, target, ctx) {
 
       await withLoading(target, async () => {
         try {
-          await api.createPost({
+          const created = await api.createPost({
             propertyId: ctx.state.currentProperty?.propertyId,
             title: title.value.trim(),
             body: body.value.trim(),
             contact: contact?.value.trim(),
           });
+
+          /**
+           * Фотография идёт вторым запросом, как вложения к обращению.
+           *
+           * Если она не дошла — объявление всё равно опубликовано, и текст
+           * человека не пропадает. Про фотографию говорим отдельно: молча
+           * потерять её хуже, чем сказать, что не вышло.
+           */
+          const picked = document.querySelector('#postPhoto')?.files?.[0];
+          let photoFailed = '';
+          if (picked && created?.id) {
+            try {
+              await api.attachPostPhoto(created.id, picked);
+            } catch (error) {
+              photoFailed = error.message;
+            }
+          }
+
           platform.haptic('medium');
-          toast('Объявление размещено');
+          toast(photoFailed
+            ? `Объявление размещено, но фотография не приложилась: ${photoFailed}`
+            : 'Объявление размещено');
           await ctx.show('market');
         } catch (error) {
           toast(error.message);

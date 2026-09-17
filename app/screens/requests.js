@@ -2,7 +2,7 @@ import { api } from '../api.js';
 import { platform } from '../platform.js';
 import {
   esc, html, formatDate, formatDay, loadingState, errorState, emptyState, toast, withLoading,
-  eventAuthor, moreLine, keepScroll,
+  eventAuthor, moreLine, keepScroll, plural,
 } from '../ui.js';
 import { wipNote } from '../wip.js';
 import { dateField } from '../datepicker.js';
@@ -150,7 +150,7 @@ export async function renderRequestDetail(id) {
             <span>${r.status === 'need_info' ? 'нужны уточнения' : 'в работе'}</span>
             <span>выполнено</span>
           </div>`}
-      ${!closed && r.slaLabel ? `
+      ${!closed && r.hasDeadline && r.slaLabel ? `
         <div class="sla ${SLA_TONE[r.sla] ?? ''}">
           ${r.sla === 'overdue' ? 'Срок вышел' : 'Срок реакции'} · ${esc(r.slaLabel)}
         </div>` : ''}
@@ -249,22 +249,68 @@ export async function renderRequestDetail(id) {
         ? 'Ответьте диспетчеру'
         : 'Что-то изменилось или забыли уточнить — напишите здесь'}"></textarea>
       <div class="field-error" id="reqReplyErr"></div>
+
+      <!--
+        Файлы можно приложить и к дополнению, а не только к новой заявке:
+        «протечка стала хуже, вот фотография» — самый частый случай, ради
+        которого человек возвращается в обращение.
+      -->
+      <label class="btn-primary secondary">
+        Прикрепить файл
+        <input type="file" id="reqReplyFiles" hidden multiple
+               accept="image/*,application/pdf" data-action="pick-reply-files">
+      </label>
+      <div id="reqReplyFilesList" class="file-chosen"
+           data-hint="${esc(attachRoom(r))}">${esc(attachRoom(r))}</div>
+
       <button class="btn-primary" data-action="send-comment" data-id="${esc(r.id)}">
         Отправить диспетчеру
       </button>`}
 
     ${r.status === 'done' ? ratingBlock(r) : ''}
 
+    ${contactBlock(r.addressee)}`;
+}
+
+/**
+ * Связь по заявке — только настоящий телефон и только настоящей ссылкой.
+ *
+ * ЧТО ЗДЕСЬ БЫЛО. Литерал «+7 (495) 123-45-67 · будни 8:00–20:00»
+ * и кнопка с обработчиком `toast('Звоним: …')`, которая никуда
+ * не звонила. Выдуманный московский номер и выдуманный график работы
+ * в приложении, чьё правило звучит «данные — только настоящие»,
+ * при том что настоящий телефон организации лежит в реестре.
+ *
+ * Теперь номер приходит с сервера (`addressee.phone`), а его отсутствие
+ * — это ответ: блока просто нет. Пустая строка честнее выдуманной.
+ *
+ * Ссылка, а не кнопка: `tel:` набирает номер сам, без нашего кода.
+ */
+function contactBlock(addressee) {
+  if (!addressee?.phone) return '';
+
+  const title = addressee.kind === 'org'
+    ? `Позвонить в «${esc(addressee.name)}»`
+    : 'Позвонить';
+
+  return html`
     <div class="field-label">Связь по заявке</div>
     <div class="list">
-      <button class="row tappable" data-action="call" data-phone="+7 (495) 123-45-67">
+      <a class="row tappable" href="tel:${esc(telHref(addressee.phone))}">
         <span class="sq new"><svg viewBox="0 0 20 20" fill="none"><path d="M4 4.5C4 4 4.5 3.2 5.2 3.2H7L8.2 6.8L6.5 8C7.2 9.8 9 11.8 10.8 12.5L12 10.8L15.6 12V13.8C15.6 14.5 15 15 14.3 15C8.6 15 4 10.4 4 4.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></span>
         <div class="content">
-          <div class="t">Позвонить диспетчеру</div>
-          <div class="d">+7 (495) 123-45-67 · будни 8:00–20:00</div>
+          <div class="t">${title}</div>
+          <!-- Графика работы мы не знаем и придумывать его не будем -->
+          <div class="d">${esc(addressee.phone)}</div>
         </div>
-      </button>
+      </a>
     </div>`;
+}
+
+/** Номер для `tel:`: всё, кроме цифр и ведущего плюса, набору мешает. */
+export function telHref(phone) {
+  const digits = String(phone ?? '').replace(/[^\d+]/g, '');
+  return digits.startsWith('+') ? `+${digits.slice(1).replace(/\+/g, '')}` : digits;
 }
 
 function statusTone(status) {
@@ -390,6 +436,24 @@ function fileSize(bytes) {
   return `${(size / 1024 / 1024).toFixed(1)} МБ`;
 }
 
+/** Столько файлов принимает ОДНО обращение — потолок сервера. */
+const MAX_FILES = 5;
+
+/**
+ * Сколько файлов ещё можно приложить.
+ *
+ * Потолок общий на обращение, а не на сообщение: `saveAttachment` считает
+ * уже приложенные и отвечает отказом. Значит сказать об этом надо ДО того,
+ * как человек выберет шестой файл, — иначе отказ приходит на ровном месте
+ * и выглядит поломкой.
+ */
+function attachRoom(r) {
+  const left = MAX_FILES - (r.photos?.length ?? 0);
+  if (left <= 0) return `К обращению уже приложено ${MAX_FILES} файлов — это предел`;
+  if (left === MAX_FILES) return 'Фотография помогает больше описания. До пяти файлов, каждый до 10 МБ';
+  return `Можно приложить ещё ${left} ${plural(left, 'файл', 'файла', 'файлов')}, каждый до 10 МБ`;
+}
+
 /**
  * Кто увидит обращение — называем всех, а не только главного адресата.
  *
@@ -404,9 +468,30 @@ function fileSize(bytes) {
 function addresseeLine(hm) {
   if (!hm) return '';
 
-  if (hm.orgName && hm.hasChairman) {
+  /**
+   * Организация, известная реестру, — это ещё не читатель.
+   *
+   * Кабинет диспетчера заводится отдельной командой, и 11 сентября
+   * замерено: 14 221 дом области в реестре, кабинет есть у восьми.
+   * Пока строка смотрела только на `orgName`, всем прочим обещался
+   * диспетчер, которого не существует.
+   */
+  const reader = hm.orgName && hm.orgHasCabinet;
+
+  if (reader && hm.hasChairman) {
     return html`<div class="warn-line" style="margin-top:2px">
         Обращение увидят управляющая компания «${esc(hm.orgName)}» и совет дома.
+      </div>`;
+  }
+  if (reader) {
+    // Единственный адресат ясен без отдельной строки
+    return '';
+  }
+  if (hm.orgName && hm.hasChairman) {
+    return html`<div class="warn-line" style="margin-top:2px">
+        Обращение увидит совет дома. Управляющая компания «${esc(hm.orgName)}»
+        за вашим домом закреплена, но кабинета в сервисе у неё пока нет —
+        туда запись попадёт, когда он появится.
       </div>`;
   }
   if (hm.hasChairman) {
@@ -415,9 +500,11 @@ function addresseeLine(hm) {
       </div>`;
   }
   if (hm.orgName) {
-    // УК есть, председателя нет — тут и раньше было нечего добавить:
-    // единственный адресат ясен без отдельной строки
-    return '';
+    return html`<div class="warn-line" style="margin-top:2px">
+        За вашим домом закреплена «${esc(hm.orgName)}», но кабинета в сервисе
+        у неё пока нет, а председателя у дома тоже. Запись сохранится с датой
+        и никуда не денется — её увидит тот, кто первым возьмётся за дом.
+      </div>`;
   }
   return html`<div class="warn-line" style="margin-top:2px">
       Адресата пока нет — за домом никто не закреплён. Запись сохранится
@@ -481,9 +568,7 @@ export function renderComplaintForm(state, kind = 'complaint') {
     ` : ''}
 
     <div class="field-label">Фотографии и документы</div>
-    <!-- Без display:block: он сбивал центрирование от .btn-primary (та
-         выравнивает флексом), и надпись прижималась к верху кнопки -->
-    <label class="btn-primary secondary" style="cursor:pointer">
+    <label class="btn-primary secondary">
       Прикрепить файл
       <input type="file" id="reqFiles" hidden multiple
              accept="image/*,application/pdf" data-action="pick-files">
@@ -529,14 +614,28 @@ function hoursWord(n) {
  * статус не поменяет никто, и уведомление никогда не придёт.
  */
 function successText(hm, slaHours, word) {
-  if (hm?.orgName) {
+  /**
+   * Срок реакции и уведомление обещаем ТОЛЬКО при живом кабинете.
+   *
+   * Прежнее условие — `hm?.orgName` — выполнялось у каждого дома
+   * из реестра, то есть у 14 213 домов области, где читать заявку
+   * некому. Житель получал номер, срок и обещание уведомления,
+   * а через сутки — красное «Срок вышел», из которого следовало,
+   * что УК его проигнорировала. Компания при этом о заявке не знала.
+   */
+  if (hm?.orgName && hm?.orgHasCabinet) {
     return `Диспетчер увидит заявку сразу. Срок реакции по этой категории —
             ${slaHours} ${word}. Статус придёт уведомлением.`;
   }
   if (hm?.hasChairman) {
-    return `Обращение увидит совет дома. Управляющей компании у вашего
-            дома нет, поэтому статус менять некому — но запись останется
+    return `Обращение увидит совет дома. Статус менять некому — кабинета
+            управляющей компании в сервисе пока нет, — но запись останется
             с датой и никуда не денется.`;
+  }
+  if (hm?.orgName) {
+    return `Обращение сохранено с датой. За вашим домом закреплена
+            «${hm.orgName}», но кабинета в сервисе у неё пока нет:
+            запись дождётся того, кто возьмётся за дом.`;
   }
   return `За вашим домом пока никто не закреплён, но обращение сохранено
           с датой — его увидит тот, кто возьмётся за дом.`;
@@ -567,7 +666,9 @@ export async function handleRequestAction(action, target, ctx) {
       window.__reqTab = target.dataset.tab;
       // Смена вкладки — это новый взгляд на список: показанное считаем заново
       archiveShown = ARCHIVE_STEP;
-      await ctx.show('requests');
+      // refresh, а не show: переключение «Активные / Архив» — тот же экран,
+      // и шага «назад» оно добавлять не должно (как у вкладок «Совета дома»)
+      await ctx.refresh();
       return true;
 
     case 'req-more':
@@ -599,10 +700,6 @@ export async function handleRequestAction(action, target, ctx) {
       return true;
     }
 
-    case 'call':
-      toast(`Звоним: ${target.dataset.phone}`);
-      return true;
-
     case 'send-comment': {
       const field = document.querySelector('#reqReply');
       const err = document.querySelector('#reqReplyErr');
@@ -623,8 +720,29 @@ export async function handleRequestAction(action, target, ctx) {
       await withLoading(target, async () => {
         try {
           const result = await api.commentRequest(target.dataset.id, text);
+
+          /**
+           * Файлы уходят после сообщения, как и при создании заявки.
+           * Не дошли — само сообщение уже в переписке, и терять его
+           * из-за файла нельзя. Про неудачу говорим прямо: молча
+           * потерянная фотография протечки хуже отказа.
+           */
+          const picked = Array.from(
+            document.querySelector('#reqReplyFiles')?.files ?? [],
+          );
+          const failed = [];
+          for (const file of picked) {
+            try {
+              await api.attachFile(target.dataset.id, file);
+            } catch (error) {
+              failed.push(`${file.name}: ${error.message}`);
+            }
+          }
+
           platform.haptic('medium');
-          toast(result.reopened ? 'Ответ отправлен — заявка снова в работе' : 'Ответ отправлен');
+          toast(failed.length
+            ? `Ответ отправлен, но файлы не приложились — ${failed.join('; ')}`
+            : result.reopened ? 'Ответ отправлен — заявка снова в работе' : 'Ответ отправлен');
           await ctx.show('request', { id: target.dataset.id });
         } catch (error) {
           toast(error.message);
@@ -752,6 +870,17 @@ export async function handleRequestAction(action, target, ctx) {
           toast(error.message);
         }
       });
+      return true;
+    }
+
+    case 'pick-reply-files': {
+      const list = document.querySelector('#reqReplyFilesList');
+      const picked = Array.from(target.files ?? []);
+      if (!list) return true;
+
+      list.innerHTML = picked.length
+        ? picked.map((f) => `<div>${esc(f.name)} · ${esc(fileSize(f.size))}</div>`).join('')
+        : esc(list.dataset.hint ?? '');
       return true;
     }
 

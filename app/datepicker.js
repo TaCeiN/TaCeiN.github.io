@@ -112,6 +112,18 @@ function sheetHost() {
   return host;
 }
 
+/**
+ * Пометить выбранной одну кнопку из ряда, не трогая остальную разметку.
+ *
+ * Минуты размечены классом `.dp-month` (та же плитка, что у месяцев),
+ * поэтому селектор приходит снаружи: у часов и минут он разный.
+ */
+function selectOne(selector, target) {
+  for (const node of sheetHost().querySelectorAll(selector)) {
+    node.classList.toggle('sel', node === target);
+  }
+}
+
 function openPicker(trigger) {
   const id = trigger.dataset.for;
   const input = document.querySelector(`#${CSS.escape(id)}`);
@@ -296,8 +308,25 @@ export async function handleDateAction(action, target) {
   }
 
   if (action === 'dp-back-days') { open.view = 'days'; render(); return true; }
-  if (action === 'dp-hour') { open.hh = Number(target.dataset.h); render(); return true; }
-  if (action === 'dp-minute') { open.mm = Number(target.dataset.m); render(); return true; }
+  /**
+   * Час и минуты меняют ОДИН класс на одной кнопке — и раньше ради этого
+   * звали render(), а он переписывает разметку шторки целиком. Узел
+   * .dp-sheet создавался заново, и анимация выезда снизу отыгрывалась
+   * на каждое касание: экран дёргался, пока человек выбирал время.
+   *
+   * Правило: render() зовём, когда меняется ВИД; выбор внутри вида
+   * правит классы.
+   */
+  if (action === 'dp-hour') {
+    open.hh = Number(target.dataset.h);
+    selectOne('.dp-hour', target);
+    return true;
+  }
+  if (action === 'dp-minute') {
+    open.mm = Number(target.dataset.m);
+    selectOne('.dp-minutes .dp-month', target);
+    return true;
+  }
 
   if (action === 'dp-months') { open.view = 'months'; render(); return true; }
 

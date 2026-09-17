@@ -1,5 +1,6 @@
 import { esc, html, formatDate } from './ui.js';
 import { dateField, todayValue } from './datepicker.js';
+import { WIP } from './wip.js';
 
 /**
  * Управление жизнью дома: объявления и опросы.
@@ -64,10 +65,38 @@ export function postForm({ houses = [], houseLabel = '' } = {}) {
         у собрания и новости срок можно не ставить.
       </div>
 
+      <!-- Фотография объявления — одна. Сервер хранит, лента пока не показывает. -->
+      <div class="field-label">Фотография</div>
+      <div class="dsp-hint">${esc(WIP.postPhoto.note)}</div>
+      <label class="btn-primary secondary">
+        Прикрепить фотографию
+        <input type="file" id="haPhoto" hidden accept="image/*" data-action="ha-photo">
+      </label>
+      <div id="haPhotoName" class="file-chosen">Необязательно</div>
+
       <div class="dsp-actions" style="margin-top:16px">
         <button class="dsp-act primary" data-action="ha-publish">Опубликовать</button>
       </div>
     </div>`;
+}
+
+/**
+ * Показать выбранный файл под кнопкой.
+ *
+ * Поля выбора файла шлют `change`, а не `click`, — оба слушателя стоят
+ * в main.js и dispatcher.js. Без этой строки кнопка выглядит нажатой
+ * впустую, хотя файл уже выбран.
+ */
+export function showPickedPhoto(target) {
+  const name = document.querySelector('#haPhotoName');
+  if (!name) return;
+  name.textContent = target.files?.[0]?.name
+    ?? 'Необязательно';
+}
+
+/** Файл, выбранный в форме объявления, — или null. */
+export function pickedPostPhoto() {
+  return document.querySelector('#haPhoto')?.files?.[0] ?? null;
 }
 
 /** Собрать данные формы объявления. Возвращает null, если не заполнено. */

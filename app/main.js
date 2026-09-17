@@ -3,12 +3,15 @@ import { platform } from './platform.js';
 import { activePropertyStore, APP_NAME } from './config.js';
 import {
   $, setHtml, toast, loadingState, errorState, emptyState, formatDate, esc, html, withLoading,
-  confirmAction, moreLine, keepScroll,
+  confirmAction, moreLine, keepScroll, openSheet, closeSheet,
 } from './ui.js';
-import { initRouter, reset, go, back, refresh, current, depth } from './router.js';
+import { initRouter, reset, go, back, refresh, swap, current, depth } from './router.js';
+import { startScreen, revealLate } from './transitions.js';
 import { maxAutoLogin } from './config.js';
 import { renderLogin, bindLogin, tryMaxLogin } from './screens/login.js';
-import { renderHome, homeSkeleton, shortAddress, greetingFor } from './screens/home.js';
+import {
+  renderHome, homeSkeleton, shortAddress, greetingFor, pendingSheetMarkup,
+} from './screens/home.js';
 import {
   renderRequests, renderRequestDetail, renderComplaintForm, renderSuccess,
   handleRequestAction,
@@ -85,19 +88,109 @@ const TITLES = {
 
 /* ─────────────── высота под клавиатуру ─────────────── */
 
+/**
+ * Насколько должна просесть видимая высота, чтобы считать это клавиатурой.
+ *
+ * Гоняться за фокусом поля нельзя: на компьютере клавиатура не вылезает,
+ * и навигация пропадала бы от простого щелчка по полю. А высота меняется
+ * и без клавиатуры — сворачивается адресная строка браузера, появляются
+ * панели мессенджера. Настоящая клавиатура на телефоне забирает
+ * 250–350px, так что спутать эти величины порогом в 120px нельзя.
+ *
+ * Ошибаться этот порог должен в сторону «навигация осталась»: лишняя
+ * полоска внизу — мелкое неудобство, исчезнувшая на ровном месте
+ * навигация — потерянный человек.
+ */
+const KEYBOARD_MIN_PX = 120;
+
+/**
+ * Подкрутить прокрутку так, чтобы поле оказалось примерно посередине
+ * видимой полосы.
+ *
+ * Прокручивается .page: у неё overflow-y:auto, а у .app прокрутки нет
+ * вовсе (overflow:hidden). Экраны входа рисуются прямо в #pages, но
+ * тоже своей разметкой с классом .page — так что closest находит её
+ * везде. Если вдруг не нашёл, молча ничего не делаем: сдвигать наугад
+ * хуже, чем оставить как есть.
+ */
+function centerInView(field, viewHeight) {
+  const page = field.closest('.page');
+  if (!page) return;
+
+  const box = field.getBoundingClientRect();
+  // Насколько центр поля отстоит от центра видимой полосы — на столько
+  // и прокручиваем. Координаты обеих величин экранные, поэтому вычитаются
+  // напрямую, без пересчёта относительно страницы.
+  page.scrollTop += (box.top + box.height / 2) - viewHeight / 2;
+}
+
 function trackViewport() {
   const vv = window.visualViewport;
   if (!vv) return;
-  const fit = () => document.documentElement.style
-    .setProperty('--app-h', `${Math.round(vv.height)}px`);
+
+  /** Поле, которое ждёт подкрутки в центр: см. focusin ниже */
+  let pendingFocus = null;
+
+  const fit = () => {
+    document.documentElement.style.setProperty('--app-h', `${Math.round(vv.height)}px`);
+
+    const up = window.innerHeight - vv.height > KEYBOARD_MIN_PX;
+    document.querySelector('.app')?.classList.toggle('typing', up);
+
+    /**
+     * Поле в середину видимой полосы — РОВНО ОДИН РАЗ на фокус.
+     *
+     * Движок сам подкручивает поле в видимую зону и делает это по-своему
+     * на каждой платформе: чаще всего утыкает под верхнюю кромку.
+     * Подкручивать на каждое изменение размера нельзя — человек пишет
+     * объявление в несколько строк, и экран, прыгающий на каждой букве,
+     * хуже, чем поле не по центру.
+     */
+    if (up && pendingFocus) {
+      centerInView(pendingFocus, vv.height);
+      pendingFocus = null;
+    }
+  };
+
   vv.addEventListener('resize', fit);
   vv.addEventListener('scroll', fit);
+
+  /**
+   * Запоминаем поле, но не двигаем ничего сейчас: клавиатура ещё
+   * не выехала, и видимая высота пока прежняя. Двигать будем, когда
+   * придёт resize с открытой клавиатурой.
+   */
+  document.addEventListener('focusin', (event) => {
+    const field = event.target.closest?.('input, textarea');
+    if (field) pendingFocus = field;
+  });
+
+  /** Ушёл фокус — забыли: иначе подкрутим уже неактуальное поле */
+  document.addEventListener('focusout', () => { pendingFocus = null; });
+
   fit();
 }
 
 /* ─────────────── отрисовка экранов ─────────────── */
 
-async function renderScreen(name, params = {}) {
+/**
+ * Экран рисуется под заставкой — первый после запуска.
+ *
+ * Переход здесь не нужен и не виден: предыдущего экрана под заставкой
+ * нет, а сама она гаснет плавно. Каскад в `new`, наоборот, остаётся —
+ * он и есть первое движение после заставки.
+ */
+function underSplash() {
+  const splash = $('#splash');
+  return Boolean(splash && !splash.hidden && !splash.classList.contains('gone'));
+}
+
+async function renderScreen(name, params = {}, nav = { kind: 'none', scroll: 0 }) {
+  const firstLaunch = underSplash();
+  const kind = firstLaunch ? 'none' : nav.kind;
+  // Шторка принадлежит экрану, с которого её открыли: любой переход её закрывает,
+  // включая нативную кнопку «Назад» MAX, которая зовёт back() в обход кликов
+  closeSheet();
   state.cleanup?.();
   state.cleanup = null;
 
@@ -144,16 +237,33 @@ async function renderScreen(name, params = {}) {
       ? state.me?.properties.find((p) => p.propertyId === attachTo)
       : null;
 
-    setHtml(pages, renderLogin({
+    /**
+     * Экран входа приносит собственный `.page` в разметке. Разбираем её
+     * во фрагмент и отдаём корневой `.page` модулю переходов — те же
+     * правила, что у остальных экранов. bindLogin по-прежнему слушает
+     * #pages: уходящий экран `inert`, а его слушатель снимается
+     * в начале следующей отрисовки (state.cleanup).
+     */
+    const template = document.createElement('template');
+    template.innerHTML = renderLogin({
       ...state,
       ...params,
       addingAddress: adding,
       attachTo,
       attachLabel: attached ? shortAddress(attached) : '',
-    }));
+    }).trim();
+    const loginScreen = startScreen(pages, { kind, element: template.content.firstElementChild });
     state.cleanup = bindLogin(pages, {
       attachTo,
-      onSuccess: () => (name === 'login' ? boot({ silent: true }) : boot()),
+      /**
+       * Молча — во всех трёх случаях.
+       *
+       * Заставка принадлежит запуску приложения и входу в него, а не
+       * действию внутри сеанса. Здесь человек уже внутри: он добавил
+       * квитанцию к своей квартире, и четыре секунды анимации читаются
+       * как «приложение перезапустилось, я что-то сломал».
+       */
+      onSuccess: () => boot({ silent: true }),
       /**
        * Обновить свои данные, не уходя с экрана: после отправки или отзыва
        * заявки список объектов на сервере уже другой, и профиль не должен
@@ -162,13 +272,21 @@ async function renderScreen(name, params = {}) {
       refreshMe: async () => { state.me = await api.me(); },
       rerender: () => renderScreen(name, params),
     });
+    // Разметка синхронная — ждать нечего
+    loginScreen.show();
     return;
   }
 
   // Сначала каркас, потом данные: пустой экран во время загрузки
   // выглядит как зависание
-  setHtml(pages, `<div class="page active" id="screen">${loadingState()}</div>`);
-  const host = $('#screen');
+  /**
+   * Новый экран — невидимым рядом со старым, см. app/transitions.js.
+   * Строка «Загружаем…» станет видна, только если данные не придут
+   * за WAIT_MS.
+   */
+  const screen = startScreen(pages, { kind });
+  const host = screen.page;
+  host.innerHTML = loadingState();
 
   /**
    * Заголовок раздела рисуем сами, первой строкой страницы.
@@ -178,7 +296,27 @@ async function renderScreen(name, params = {}) {
    * и после иконки мини-аппа.
    */
   const heading = name === 'home' ? '' : `<h1 class="screen-title">${esc(screenTitle)}</h1>`;
-  const put = (content) => setHtml(host, heading + content);
+  /**
+   * Первая настоящая разметка — сигнал к переходу: экран въезжает сразу
+   * с данными, одним движением. Заглушка (`skeleton`) сигналом не
+   * считается. Если экран уже въехал заглушкой — данные опоздали дольше
+   * WAIT_MS, — содержимое проявляется на месте.
+   */
+  const put = (content, { skeleton = false } = {}) => {
+    // Экран, с которого уже ушли: его ответ на новый экран не попадает
+    if (screen.stale) return;
+    const late = screen.shown;
+
+    setHtml(host, heading + content);
+
+    if (!skeleton) {
+      // До перехода: иначе экран въедет сверху и прыгнет вниз на глазах
+      if (nav.scroll) host.scrollTop = nav.scroll;
+      if (!late) screen.show();
+      // refresh анимации не получает ни в каком виде — см. спеку
+      else if (kind !== 'none') revealLate(host);
+    }
+  };
 
   try {
     /**
@@ -197,7 +335,7 @@ async function renderScreen(name, params = {}) {
 
     switch (name) {
       case 'home':
-        put(homeSkeleton());
+        put(homeSkeleton(), { skeleton: true });
         put(await renderHome(state));
         break;
       case 'requests':
@@ -318,8 +456,29 @@ async function renderScreen(name, params = {}) {
       await reset('login', { name: platform.unsafeName });
       return;
     }
+    if (screen.stale) return;
     setHtml(host, errorState(error, 'reload'));
+    screen.show();
   }
+}
+
+/**
+ * Перечитать председательство.
+ *
+ * ЗАЧЕМ ОТДЕЛЬНОЙ ФУНКЦИЕЙ. Раньше эта строка стояла единственный раз —
+ * внутри `boot()`. Значит роль, полученная во время сеанса, до человека
+ * не доходила вовсе. Проверено на живом стенде 11 сентября: оператор
+ * назначает председателя, сервер отвечает `isChairman: true`, а экран
+ * продолжает показывать «ожидает» и «у дома нет председателя», пока
+ * мини-апп не закроют и не откроют заново. В MAX с его кэшем это
+ * означало до десяти минут неопределённости в самый важный момент
+ * подключения дома.
+ *
+ * Ошибку глотаем: раздел «Совет дома» — дополнение, и упавший запрос
+ * не должен мешать приложению жителя работать как обычно.
+ */
+async function refreshChairman() {
+  state.chairman = await api.chairmanMe().catch(() => ({ isChairman: false, houses: [] }));
 }
 
 function syncTabs(name) {
@@ -371,8 +530,24 @@ async function handleAction(action, target) {
    */
   const ctx = {
     state, show: (n, p) => go(n, p), go, reset, refresh, back,
-    /** Перечитать свой профиль: список объектов и статусы могли измениться */
-    refreshMe: async () => { state.me = await api.me(); },
+    /**
+     * Перечитать свой профиль: список объектов и статусы могли измениться.
+     *
+     * Вместе с профилем ОБЯЗАТЕЛЬНО переставляем `currentProperty`: это
+     * объект из прежнего ответа `/api/me`, и без перестановки он остаётся
+     * старым. Главная и переключатель квартир читают именно его, поэтому
+     * человек, отметивший оплату, возвращался на главную и видел прежнюю
+     * сумму — данные пришли, а экран смотрел в старую копию.
+     *
+     * Если квартира из ответа пропала (доступ отозвали, заявку отклонили),
+     * оставляем `null`: указывать в никуда хуже, чем не указывать.
+     */
+    refreshMe: async () => {
+      state.me = await api.me();
+      const id = state.currentProperty?.propertyId;
+      state.currentProperty = state.me.properties.find((p) => p.propertyId === id) ?? null;
+      await refreshChairman();
+    },
   };
 
   // Календарь общий для всех экранов, поэтому стоит первым в цепочке
@@ -484,8 +659,30 @@ async function handleAction(action, target) {
           toast(res?.created
             ? 'Заявка принята — мы подключим ваш дом'
             : 'Заявка уже принята, ждём');
-          state.me = await api.me();
-          await refresh();
+          /**
+           * Именно `refreshMe`, а не голое `state.me = await api.me()`.
+           *
+           * Присваивание профиля НЕ переставляет `currentProperty`, а экран
+           * рисуется из него — и поданная заявка не появлялась на месте
+           * кнопки: тост исчезал, а блок оставался прежним. Ровно об этой
+           * ловушке предупреждает комментарий у `refreshMe` выше, и здесь
+           * на неё наступили.
+           */
+          await ctx.refreshMe();
+          /**
+           * На экране ожидания после квитанции — не `refresh`.
+           *
+           * Он заново рисует экран входа с нуля, и карточка заявки
+           * пропадала: человек, только что нажавший «Подключить дом»,
+           * оказывался перед «Сфотографируйте квитанцию», будто ничего
+           * не отправил. Экран входа сам перерисует свою карточку.
+           */
+          const screen = current();
+          if (screen && ENTRY_SCREENS.has(screen.name)) {
+            document.dispatchEvent(new CustomEvent('house-claimed'));
+          } else {
+            await refresh();
+          }
         } catch (error) {
           toast(error.message);
         }
@@ -493,10 +690,36 @@ async function handleAction(action, target) {
       return;
     }
 
+    /**
+     * Шторка «ожидает»: объяснение, «Проверить», код приглашения.
+     * Открывается нажатием на пометку в шапке главной, см. pendingSheetMarkup.
+     */
+    case 'pending-sheet':
+      if (state.currentProperty?.status === 'pending') {
+        openSheet(pendingSheetMarkup(state.currentProperty), 'Заявка на доступ');
+      }
+      return;
+
+    case 'sheet-close':
+      closeSheet();
+      return;
+
     /** Проверка, подтвердил ли собственник доступ. Сессия уже своя. */
     case 'check-access':
       try {
         state.me = await api.me();
+        /**
+         * Председательство перечитываем ТОЖЕ.
+         *
+         * Человек жмёт «Проверить» ровно в тот момент, когда его дом
+         * подключают, — а подключение дома чаще всего и означает, что
+         * председателем назначили его самого. Пока здесь читался только
+         * профиль, роль до него не доходила: сервер отвечал
+         * `isChairman: true`, а раздела в приложении не появлялось
+         * до полного перезапуска мини-аппа.
+         */
+        await refreshChairman();
+
         /**
          * Подтверждение — это ACTIVE. Ожидающий объект приходит в список
          * сразу, поэтому проверка на длину списка отвечала бы «пустили»
@@ -507,9 +730,23 @@ async function handleAction(action, target) {
           platform.haptic('medium');
           state.currentProperty = approved;
           activePropertyStore.set(state.me.user?.id, approved.propertyId);
+          toast(state.chairman?.isChairman
+            ? 'Доступ открыт. Вас назначили председателем совета дома'
+            : 'Доступ к дому открыт');
           return reset('home');
         }
-        toast('Председатель пока не подтвердил доступ');
+        /**
+         * Ответ пишем в шторку, если «Проверить» нажали в ней: тост
+         * живёт в .app с z-index 50, а шторка — 81, и под её фоном
+         * тоста было бы не видно.
+         */
+        const status = document.querySelector('#pendingStatus');
+        if (status) {
+          status.textContent = 'Пока не подтвердили — загляните позже.';
+          status.classList.add('show');
+        } else {
+          toast('Председатель пока не подтвердил доступ');
+        }
       } catch (error) {
         toast(error.message);
       }
@@ -542,7 +779,9 @@ async function handleAction(action, target) {
           await api.redeemInvite(code);
           platform.haptic('medium');
           toast('Квартира добавлена');
-          await boot();
+          // Молча: человек в середине сеанса, заставка здесь читается
+          // как перезапуск — см. onSuccess у экрана квитанции
+          await boot({ silent: true });
         } catch (error) {
           if (box) {
             box.textContent = error.message;
@@ -563,7 +802,13 @@ async function handleAction(action, target) {
       return go('payment');
 
     default:
-      if (NAVIGATE[action]) return go(NAVIGATE[action]);
+      if (NAVIGATE[action]) {
+        /**
+         * `data-swap` — соседний вид того же места (доски ленты), а не шаг
+         * вглубь. Растворение и без записи в стек «назад», см. swap в router.js.
+         */
+        return target.dataset.swap ? swap(NAVIGATE[action]) : go(NAVIGATE[action]);
+      }
   }
 }
 
@@ -622,6 +867,18 @@ async function hideSplash() {
   // Прячем после анимации, иначе прозрачный слой перехватывает нажатия
   setTimeout(() => { splash.hidden = true; splash.classList.remove('waiting'); }, 340);
 }
+
+/**
+ * Экраны, с которых после успеха уходят обязательно.
+ *
+ * Все три — формы входа во что-то: сама сессия, новый адрес, квитанция
+ * к известной квартире. Перерисовать такую форму поверх успеха значит
+ * показать человеку ровно то, что он только что заполнил, — и он
+ * заполняет второй раз. Раньше от этого спасала заставка: она приходила
+ * вместе с полной перезагрузкой и уводила на главную, но платой были
+ * четыре секунды анимации посреди сеанса.
+ */
+const ENTRY_SCREENS = new Set(['login', 'add-property', 'add-receipt']);
 
 async function bootInner({ silent = false } = {}) {
   const pages = $('#pages');
@@ -703,7 +960,7 @@ async function bootInner({ silent = false } = {}) {
    * Ошибку глотаем: раздел «Совет дома» — дополнение, и если запрос
    * не прошёл, приложение жителя обязано открыться как обычно.
    */
-  state.chairman = await api.chairmanMe().catch(() => ({ isChairman: false, houses: [] }));
+  await refreshChairman();
 
   /**
    * Название управляющей организации живёт на самой главной, под адресом:
@@ -719,7 +976,7 @@ async function bootInner({ silent = false } = {}) {
    * и человек остаётся на ней с уже работающей сессией.
    */
   const screen = current();
-  if (silent && screen && screen.name !== 'login') return refresh();
+  if (silent && screen && !ENTRY_SCREENS.has(screen.name)) return refresh();
   return reset('home');
 }
 
@@ -830,6 +1087,13 @@ function start() {
   document.addEventListener('click', (event) => {
     const target = event.target.closest('[data-action]');
     if (!target) return;
+    /**
+     * Уходящий экран — `inert` с начала смены (app/transitions.js).
+     * Нажатие пальцем по нему браузер и так не пропускает, но вебвью без
+     * поддержки inert и программный click() дошли бы до обработчика
+     * и положили бы экран в стек второй раз.
+     */
+    if (target.closest('[inert]')) return;
     handleAction(target.dataset.action, target);
   });
 

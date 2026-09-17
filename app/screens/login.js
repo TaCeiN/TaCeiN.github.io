@@ -3,6 +3,7 @@ import { platform } from '../platform.js';
 import { scanFromFile } from '../qr.js';
 import { esc, html, toast, withLoading, errorState } from '../ui.js';
 import { APP_NAME, maxAutoLogin } from '../config.js';
+import { askOperatorBlock } from './home.js';
 
 /**
  * Вход по QR квитанции.
@@ -65,7 +66,7 @@ export function renderLogin(state) {
             с квитанции ЖКУ, всё остальное приложение сделает само.
           </div>
           ${config.botUsername ? html`
-            <a class="btn-primary" style="display:block;text-align:center;text-decoration:none"
+            <a class="btn-primary"
                href="https://max.ru/${esc(config.botUsername)}?startapp"
                target="_blank" rel="noopener">Открыть в MAX</a>` : ''}
         </div>
@@ -143,7 +144,7 @@ export function renderLogin(state) {
           бы разрешения на камеру, а сканер мессенджера не настраивается
           вовсе и на win-1251 ошибается.
         -->
-        <label class="btn-primary" style="cursor:pointer;display:block;text-align:center">
+        <label class="btn-primary">
           Сфотографировать квитанцию
           <input type="file" accept="image/*" id="qrFile" hidden>
         </label>
@@ -208,6 +209,13 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
   let lastQr = null;
   /** Улица, выбранная в подсказке: код нужен серверу, а не текст поля */
   let chosenStreet = null;
+  /**
+   * Дом, выбранный из списка домов улицы. Пусто — человек либо ещё
+   * не выбрал, либо нажал «Моего дома нет в списке» и вводит номер сам.
+   */
+  let chosenHouse = null;
+  /** Ответ «регион не определили»: нужен форме адреса после выбора региона */
+  let regionMissingInfo = null;
   /** Заявка, которую сейчас дозаполняет человек */
   let pendingBinding = null;
   /**
@@ -328,8 +336,8 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
           ${result.hasChairman
             ? `Доступ подтверждает председатель совета дома. Расскажите о себе,
                чтобы он понял, кто вы.`
-            : `Доступ откроет председатель совета дома. Расскажите о себе,
-               чтобы вас можно было найти в её данных.`}
+            : `Доступ откроет председатель совета дома, когда он у дома появится.
+               Расскажите о себе — без этого подтвердить заявку нельзя.`}
         </div>
 
         <div class="field-label">Фамилия и имя</div>
@@ -420,7 +428,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
           один раз, дальше он подставится сам.
         </div>
         <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
-          Например: пр-кт Ленина, дом 85, корпус 3, квартира 27
+          Выберите улицу, затем свой дом из списка и укажите квартиру
         </div>
 
         <div class="field-label">Улица${info?.regionName ? `, ${esc(info.regionName)}` : ''}</div>
@@ -429,7 +437,13 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
         <div class="addr-hits" id="addrHits" hidden></div>
         <div class="field-error" id="addrErr"></div>
 
-        <div class="addr-row">
+        <div id="addrHouseBlock" hidden>
+          <div class="field-label">Дом</div>
+          <div class="chips addr-houses" id="addrHouses"></div>
+          <button class="link-btn" data-action="manual-house" id="addrManualBtn">Моего дома нет в списке</button>
+        </div>
+
+        <div class="addr-row" id="addrManual" hidden>
           <div>
             <div class="field-label">Дом</div>
             <input type="text" id="addrHouse" placeholder="85 или 15А, 4Б/1" autocomplete="off">
@@ -457,7 +471,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
         <div class="dt-p" id="addrPrivateNote" style="font-size:13px;color:var(--tx-2);margin-top:8px" hidden>
           Хорошо, у своего дома квартиры не бывает — спрашивать не будем.
         </div>
-        <div class="dt-p" style="font-size:13px;color:var(--tx-2);margin-top:8px">
+        <div class="dt-p" id="addrManualHint" style="font-size:13px;color:var(--tx-2);margin-top:8px" hidden>
           Букву и дробь пишите прямо в номере дома: «15А», «4Б/1».
         </div>
 
@@ -472,27 +486,61 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
     root.querySelector('#addrStreet')?.focus();
   }
 
-  /** Регион не подключён: врать про «скоро» не надо, объясняем как есть. */
+  /**
+   * Регион не подключён — но чаще всего он подключён, просто не тот.
+   *
+   * Код региона считается по ИНН ПОЛУЧАТЕЛЯ ПЛАТЕЖА, а не по месту
+   * жительства: `regionCodeFromInn` берёт первые две цифры ИНН юрлица.
+   * Межрегиональный ресурсник, зарегистрированный в другом субъекте,
+   * даёт чужой код — и житель Ростовской области читал «справочник
+   * адресов ВАШЕГО региона (код 77) пока не загружен» при полностью
+   * загруженном регионе 61. Воспроизведено на живом стенде 11 сентября:
+   * в том же ответе сервер честно перечислял, что загружена как раз
+   * Ростовская область.
+   *
+   * Прежний экран не предлагал ни одного действия и давал совет,
+   * не связанный с причиной, — «попросите управляющую компанию
+   * подключиться к сервису». К загрузке справочника ФНС управляющая
+   * компания отношения не имеет.
+   *
+   * Теперь загруженные регионы кликабельны: список уже приезжает
+   * в том же ответе полем `available`.
+   */
   function showRegionMissing(info) {
     const box = root.querySelector('#loginError');
     if (!box) return;
 
     const available = info?.available ?? [];
+    // Форма адреса покажет их следующим шагом — терять незачем
+    regionMissingInfo = info ?? null;
 
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
-        <div class="meter-name">Регион пока не подключён</div>
+        <div class="meter-name">Не удалось определить ваш регион</div>
         <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
-          ${esc(info?.message ?? '')}
+          В этой квитанции нет адреса, а регион мы определяем по реквизитам
+          получателя платежа${info?.payeeName ? html` — «${esc(info.payeeName)}»` : ''}.
+          Он зарегистрирован не там, где вы живёте, или его регион
+          в сервис пока не загружен.
         </div>
         ${available.length ? html`
+          <div class="field-label">Выберите свой регион</div>
+          <div class="chips" id="regionChips">
+            ${available.map((r) => html`
+              <span class="chip" data-action="pick-region"
+                    data-code="${esc(r.code)}" data-name="${esc(r.name)}">
+                ${esc(r.name)}
+              </span>`).join('')}
+          </div>
+          <div class="dt-p" style="font-size:13px;color:var(--tx-2);margin-top:10px">
+            Другие регионы подключаем по мере загрузки справочника адресов.
+          </div>`
+        : html`
           <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
-            Сейчас загружены: ${esc(available.map((r) => r.name).join(', '))}.
-          </div>` : ''}
-        <div class="dt-p" style="font-size:13px;color:var(--tx-2)">
-          Попросите управляющую компанию подключиться к сервису — тогда адрес
-          подставится автоматически, без ручного ввода.
-        </div>
+            Справочник адресов пока не загружен ни по одному региону.
+            Отсканируйте квитанцию, в которой адрес напечатан, — тогда
+            справочник не понадобится вовсе.
+          </div>`}
       </div>`;
   }
 
@@ -506,6 +554,9 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
 
     field.addEventListener('input', () => {
       chosenStreet = null;
+      chosenHouse = null;
+      const houseBlock = root.querySelector('#addrHouseBlock');
+      if (houseBlock) houseBlock.hidden = true;
       clearTimeout(timer);
       const value = field.value.trim();
 
@@ -566,7 +617,17 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
     root.querySelector('#scanActions')?.setAttribute('hidden', '');
     root.querySelector('#loginLead')?.setAttribute('hidden', '');
 
-    const decides = claim?.deciders?.chairman ?? result.hasChairman;
+    const decides = claim?.deciders?.chairman ?? result.hasChairman === true;
+    /**
+     * Кабинет УК, а не просто её наличие.
+     *
+     * «Попросите управляющую компанию назначить председателя» —
+     * невыполнимый совет для дома, чья организация в сервисе
+     * не зарегистрирована, а это 14 213 домов области из 14 221.
+     * Проверено вживую 11 сентября: именно этот текст и показывался.
+     */
+    const canAskUk = claim?.deciders?.dispatcher === true;
+    const canAskOperator = claim?.houseManagement?.canAskOperator === true;
 
     box.innerHTML = html`
       <div class="dt-card" style="margin-top:0">
@@ -574,10 +635,14 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
         <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
           ${decides
             ? `Председатель совета дома увидит её и подтвердит доступ.`
-            : `У дома пока нет председателя. Попросите управляющую компанию
-               его назначить — это делается один раз.`}
+            : canAskUk
+              ? `У дома пока нет председателя. Попросите управляющую компанию
+                 его назначить — это делается один раз.`
+              : `У дома пока нет ни председателя, ни кабинета управляющей
+                 организации в сервисе — подтвердить доступ к соседям некому.`}
           Повторно сканировать квитанцию не нужно — приложение вас запомнило.
         </div>
+        ${!decides && canAskOperator ? askOperatorBlock(claim ?? {}) : ''}
 
         <div class="field-label">Что ушло председателю</div>
         <div class="list">
@@ -655,12 +720,83 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
       if (!value) return toast('Вставьте строку QR');
       await submit(value, target, { source: 'manual' });
     }
+    /**
+     * Человек назвал свой регион сам — дальше обычная форма адреса.
+     *
+     * Это не «режим» и не выбор в настройках, а ответ на один вопрос
+     * анкеты: тот же приём, что «В квартире / В своём доме» ниже.
+     */
+    if (action === 'pick-region') {
+      showAddressForm({
+        regionCode: target.dataset.code,
+        regionName: target.dataset.name,
+        payeeName: regionMissingInfo?.payeeName ?? null,
+        persAcc: regionMissingInfo?.persAcc ?? null,
+      });
+      return;
+    }
+
     if (action === 'pick-street') {
       chosenStreet = { code: target.dataset.code, label: target.dataset.label };
+      chosenHouse = null;
       const field = root.querySelector('#addrStreet');
       if (field) field.value = target.dataset.label;
       const hits = root.querySelector('#addrHits');
       if (hits) hits.hidden = true;
+
+      /**
+       * Дома улицы — списком. Номер, набранный руками, разводил один дом
+       * надвое: «85/3» у одного соседа и «85 к3» у другого. Выбранный
+       * из списка дом даёт ровно тот ключ, что у соседей с квитанцией.
+       */
+      const houseBlock = root.querySelector('#addrHouseBlock');
+      const list = root.querySelector('#addrHouses');
+      const manual = root.querySelector('#addrManual');
+      let houses = [];
+      try {
+        houses = (await api.houses(chosenStreet.code)).houses;
+      } catch {
+        // Список не пришёл — номер можно ввести руками, как раньше
+      }
+
+      if (houses.length === 0) {
+        if (houseBlock) houseBlock.hidden = true;
+        if (manual) manual.hidden = false;
+      const manualHint = root.querySelector('#addrManualHint');
+      if (manualHint) manualHint.hidden = false;
+        root.querySelector('#addrHouse')?.focus();
+        return;
+      }
+
+      if (list) {
+        list.innerHTML = houses.map((h) => html`
+          <span class="chip" data-action="pick-house" data-key="${esc(h.houseKey)}">${esc(h.number)}</span>`).join('');
+      }
+      if (manual) manual.hidden = true;
+      const manualHint = root.querySelector('#addrManualHint');
+      if (manualHint) manualHint.hidden = true;
+      const manualBtn = root.querySelector('#addrManualBtn');
+      if (manualBtn) manualBtn.hidden = false;
+      if (houseBlock) houseBlock.hidden = false;
+      return;
+    }
+
+    if (action === 'pick-house') {
+      chosenHouse = target.dataset.key;
+      root.querySelectorAll('#addrHouses .chip').forEach((c) => c.classList.remove('sel'));
+      target.classList.add('sel');
+      return;
+    }
+
+    /** Новостройки ещё нет в ГАР — номер вводится руками, как раньше */
+    if (action === 'manual-house') {
+      chosenHouse = null;
+      root.querySelectorAll('#addrHouses .chip').forEach((c) => c.classList.remove('sel'));
+      const manual = root.querySelector('#addrManual');
+      if (manual) manual.hidden = false;
+      const manualHint = root.querySelector('#addrManualHint');
+      if (manualHint) manualHint.hidden = false;
+      target.hidden = true;
       root.querySelector('#addrHouse')?.focus();
       return;
     }
@@ -704,18 +840,22 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
       };
 
       if (!chosenStreet) return complain('Выберите улицу из подсказки');
-      if (!house) return complain('Укажите номер дома');
+      const manualOpen = root.querySelector('#addrManual')?.hidden === false;
+      if (!chosenHouse && !manualOpen) return complain('Выберите дом из списка');
+      if (!chosenHouse && !house) return complain('Укажите номер дома');
       // Квартиру не требуем: у своего дома её нет
       errorBox?.classList.remove('show');
 
       await submit(lastQr, target, {
-        address: {
-          streetCode: chosenStreet.code,
-          house,
-          block: root.querySelector('#addrBlock')?.value.trim() || undefined,
-          building: root.querySelector('#addrBuilding')?.value.trim() || undefined,
-          flat: flat || undefined,
-        },
+        address: chosenHouse
+          ? { houseKey: chosenHouse, flat: flat || undefined }
+          : {
+              streetCode: chosenStreet.code,
+              house,
+              block: root.querySelector('#addrBlock')?.value.trim() || undefined,
+              building: root.querySelector('#addrBuilding')?.value.trim() || undefined,
+              flat: flat || undefined,
+            },
         declaredPrivate: isPrivate,
       });
       return;
@@ -750,7 +890,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
            * вторую квартиру и не находил её.
            */
           await refreshMe?.();
-          await showPending({ hasChairman: true });
+          await showPending({ bindingId: pendingBinding });
         } catch (e) {
           complain(e.message);
         }
@@ -776,7 +916,7 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
     }
 
     if (action === 'withdraw-cancel') {
-      await showPending({ hasChairman: true });
+      await showPending({ bindingId: pendingBinding });
       return;
     }
 
@@ -830,8 +970,15 @@ export function bindLogin(root, { onSuccess, rerender, refreshMe, attachTo }) {
   root.addEventListener('click', onClick);
   root.querySelector('#qrFile')?.addEventListener('change', onFile);
 
+  /** «Подключить дом» нажали на карточке заявки — показать её уже с поданной просьбой */
+  const onHouseClaimed = () => {
+    if (pendingBinding) showPending({ bindingId: pendingBinding });
+  };
+  document.addEventListener('house-claimed', onHouseClaimed);
+
   return () => {
     root.removeEventListener('click', onClick);
+    document.removeEventListener('house-claimed', onHouseClaimed);
   };
 }
 

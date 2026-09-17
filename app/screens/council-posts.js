@@ -3,7 +3,7 @@ import { platform } from '../platform.js';
 import {
   esc, html, formatDate, toast, withLoading, emptyState, errorState, moreLine, keepScroll,
 } from '../ui.js';
-import { POST_KINDS, readPostForm } from '../house-admin.js';
+import { POST_KINDS, readPostForm, showPickedPhoto, pickedPostPhoto } from '../house-admin.js';
 import { dateField, todayValue } from '../datepicker.js';
 
 /**
@@ -153,6 +153,11 @@ export async function handleCouncilPostsAction(action, target, ctx) {
     return true;
   }
 
+  if (action === 'ha-photo') {
+    showPickedPhoto(target);
+    return true;
+  }
+
   if (action === 'ha-publish') {
     const payload = readPostForm();
     if (!payload) {
@@ -170,10 +175,27 @@ export async function handleCouncilPostsAction(action, target, ctx) {
           ...payload,
           houseKey: ctx.state.council.house.houseKey,
         });
+        /**
+         * Фотография идёт вторым запросом, как вложения к обращению.
+         * Не дошла — объявление всё равно опубликовано: терять
+         * написанный текст из-за картинки нельзя.
+         */
+        const photo = pickedPostPhoto();
+        let photoFailed = '';
+        if (photo && result?.id) {
+          try {
+            await api.attachPostPhoto(result.id, photo);
+          } catch (error) {
+            photoFailed = error.message;
+          }
+        }
+
         platform.haptic('medium');
-        toast(result.notified
-          ? `Опубликовано, уведомление ушло ${result.notified} жильцам`
-          : 'Опубликовано');
+        toast(photoFailed
+          ? `Опубликовано, но фотография не приложилась: ${photoFailed}`
+          : result.notified
+            ? `Опубликовано, уведомление ушло ${result.notified} жильцам`
+            : 'Опубликовано');
         await ctx.back();
       } catch (error) {
         toast(error.message);

@@ -280,10 +280,25 @@ button:active, .tappable:active{ opacity:.82; }
 .page.enter-back{ opacity:0; transform:translateX(-18px); visibility:visible; }
 .page.leave-fwd{ opacity:0; transform:translateX(-18px); visibility:visible; pointer-events:none; z-index:1; }
 .page.leave-back{ opacity:0; transform:translateX(18px); visibility:visible; pointer-events:none; z-index:1; }
+/* Растворение без сдвига — вкладки и переключатели внутри экрана */
+.page.enter-fade{ opacity:0; transform:translateX(0); visibility:visible; }
+.page.leave-fade{ opacity:0; transform:translateX(0); visibility:visible; pointer-events:none; z-index:1; }
+/* Страховка для вебвью без inert: уходящий экран нельзя нажать,
+   пока новый ждёт данных (см. startScreen в app/transitions.js) */
+.page[inert]{ pointer-events:none; }
+/* Данные опоздали дольше WAIT_MS: проявить на месте, а не подменить.
+   Заголовок экрана уже был виден на заглушке — его не трогаем. */
+.page.late-in > :not(.screen-title){ animation:page-late-in .15s ease both; }
+@keyframes page-late-in{ from{ opacity:0 } to{ opacity:1 } }
 .page::-webkit-scrollbar{ display:none; }
 
 /* во время онбординга нижняя навигация не показывается — адрес ещё не подтверждён */
 .app.onboarding .apptabs{ display:none; }
+/* Пока открыта клавиатура, нижняя навигация всё равно недоступна: под ней
+   клавиатура. Забирать у текста ~60px из оставшейся полосы незачем —
+   человек в этот момент пишет обращение или объявление, и ему нужна
+   высота, а не кнопки, на которые он не попадёт. */
+.app.typing .apptabs{ display:none; }
 
 /* ---------- шапка главной ---------- */
 .idrow{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
@@ -395,6 +410,9 @@ button:active, .tappable:active{ opacity:.82; }
 .row.tappable:active, .wrow:active{ background:var(--press); opacity:1; }
 
 
+/* Плашки — точка отсчёта для абсолютно размещённых меток внутри */
+.widget, .dt-card, .svc{ position:relative; }
+
 /* ---------- плитки услуг: градиентные иконки MAX ---------- */
 .services{ display:grid; grid-template-columns:1fr 1fr; gap:10px; width:100%; }
 .svc{
@@ -405,12 +423,28 @@ button:active, .tappable:active{ opacity:.82; }
   width:40px; height:40px; border-radius:var(--r-s); color:#fff;
   display:flex; align-items:center; justify-content:center;
 }
+
+/* ПРЕЖНИЕ заливки — фирменные градиенты MAX в полную силу.
+   Их вернули после того, как редизайн сначала не перекрыл эти правила,
+   а стёр: в версии `classic` плитки остались без цветных квадратов
+   вовсе, белый вектор висел прямо на плашке. */
 .svc.c1 .ic{ background:var(--grad-orange); }
 .svc.c2 .ic{ background:var(--grad-blue); }
 .svc.c3 .ic{ background:var(--grad-green); }
 .svc.c4 .ic{ background:var(--grad-purple); }
 .svc.c5 .ic{ background:var(--brand); }
 .svc.c6 .ic{ background:var(--grad-red); }
+
+/* Цвет виджета: тон задаётся один раз тройкой RGB, всё остальное —
+   прозрачности от него. Так тон и подложка не могут разойтись,
+   а color-mix() не нужен: в вебвью мессенджера он есть не везде. */
+.svc.c1{ --ic:255,154,46;  --ic-fg:#FFB765; }
+.svc.c2{ --ic:63,169,255;  --ic-fg:#7FC4FF; }
+.svc.c3{ --ic:18,207,122;  --ic-fg:#5FE0A8; }
+.svc.c4{ --ic:138,124,255; --ic-fg:#B0A6FF; }
+.svc.c5{ --ic:110,74,255;  --ic-fg:#A78BFF; }
+.svc.c6{ --ic:255,94,168;  --ic-fg:#FF97C6; }
+
 .svc .label{ font-size:15px; font-weight:500; line-height:1.25; margin-top:12px; color:var(--tx); letter-spacing:-.014em; }
 
 /* Счётчики раздела «Совет дома». Раньше здесь стояли классы кабинета
@@ -517,6 +551,13 @@ textarea:focus, input:focus{ border-color:var(--accent); }
   animation:spin .7s linear infinite;
 }
 @keyframes spin{ to{ transform:rotate(360deg); } }
+/* Кнопкой бывает не только <button>: выбор файла делается через <label>,
+   а внешняя ссылка — через <a>. Раньше им дописывали инлайновый
+   display:block, и он перебивал флекс из .btn-primary — надпись падала
+   к верхнему краю. Так было дважды: 30 августа у «Прикрепить файл»
+   и 2 сентября у «Сфотографировать квитанцию». Здесь этому конец. */
+label.btn-primary{ cursor:pointer; }
+a.btn-primary{ text-decoration:none; }
 .link-btn{ display:block; width:100%; text-align:center; margin-top:16px; font-size:15px; font-weight:500; color:var(--tx-2); padding:8px; }
 
 .field-error{ color:var(--negative); font-size:13px; margin-top:7px; display:none; }
@@ -598,6 +639,14 @@ textarea.error, input.error{ border-color:var(--negative); }
 }
 .profile-name{ font-size:20px; font-weight:600; margin-top:12px; color:var(--tx-strong); letter-spacing:-.028em; }
 .profile-sub{ font-size:14px; color:var(--tx-2); margin-top:3px; }
+
+/* Непрочитанное объявление: плотнее, как в почте. Отдельной точки нет —
+   у строки уже есть иконка категории слева и подпись снизу, третий
+   признак сделал бы список пёстрым. */
+.row .content .t.unread{ font-weight:600; color:var(--tx-strong); }
+
+/* Имя выбранного файла под кнопкой «Прикрепить фотографию» */
+.file-chosen{ font-size:13px; color:var(--tx-2); margin-top:8px; }
 
 /* ---------- нижняя навигация (MAX TabBar) ---------- */
 .apptabs{
@@ -842,6 +891,11 @@ img.photo-ph{ object-fit:cover; }
 
 /* Дом, корпус и квартира в строку: вместе они короче одной улицы */
 .addr-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+/* У ряда полей свой display — без этого атрибут hidden его не прячет */
+.addr-row[hidden], .link-btn[hidden] { display: none; }
+/* Дома улицы: на большой улице их сотни — список прокручивается сам, а не растягивает экран */
+.addr-houses { max-height: 240px; overflow-y: auto; padding: 2px 0; }
+.addr-houses .chip { min-width: 56px; text-align: center; }
 
 /* ─────────────── иконки плиток услуг ─────────────── */
 
@@ -1025,9 +1079,13 @@ button.dp-title:active{ background:var(--fade); }
 .dp-month.sel{ background:var(--accent); color:#fff; font-weight:600; }
 
 .dp-foot{ display:flex; gap:10px; margin-top:14px; }
+/* Центрирование явное — у кнопок в проекте глобальный text-align:left,
+   и при min-height надпись встаёт в левый верхний угол. У соседних
+   .dp-day, .dp-hour и .dp-month это прописано, у подвала забыли. */
 .dp-clear, .dp-cancel, .dp-done{
   flex:1; min-height:48px; border-radius:var(--r-m);
   font-size:16px; font-weight:500;
+  display:flex; align-items:center; justify-content:center;
 }
 .dp-clear{ background:var(--fade); color:var(--tx-2); }
 .dp-cancel{ background:var(--fade); color:var(--tx); }
@@ -1213,6 +1271,14 @@ button.dp-title:active{ background:var(--fade); }
   background:var(--blue-soft); border-color:rgba(83,152,255,.34); color:var(--tx);
 }
 .alert.receipt-cta{ padding:18px 10px; }
+/* Иконка карточки — по тому же правилу, что у плиток услуг: глубокий
+   градиент своего тона и вектор в нём же. Оставшись единственной яркой
+   заливкой на экране, она читалась как чужая наклейка.
+
+   Аварийный баннер (.alert без .receipt-cta) намеренно НЕ трогаем:
+   там красный квадрат — сигнал, и приглушать его нельзя. */
+.alert.receipt-cta{ --ic:63,169,255; --ic-fg:#7FC4FF; }
+/* Геометрия иконки общая для обеих версий: меняется только заливка */
 .alert.receipt-cta .ic{
   width:48px; height:48px; border-radius:15px;
   background:var(--grad-blue); color:#fff;

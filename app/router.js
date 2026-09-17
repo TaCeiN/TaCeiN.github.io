@@ -35,33 +35,67 @@ export function depth() {
   return stack.length;
 }
 
+/**
+ * Место прокрутки экрана, с которого уходим.
+ *
+ * Ищем активный `.page`, а не `#screen`: у экранов входа свой id,
+ * а во время смены `#screen` может принадлежать ещё не показанному экрану.
+ */
+function activeScroll() {
+  return document.querySelector('#pages .page.active')?.scrollTop ?? 0;
+}
+
 /** Заменяет весь стек: переключение вкладки начинает навигацию заново. */
 export async function reset(name, params = {}) {
   stack.length = 0;
-  stack.push({ name, params });
+  stack.push({ name, params, scroll: 0 });
   syncBackButton();
-  await render(name, params);
+  await render(name, params, { kind: 'fade', scroll: 0 });
 }
 
 export async function go(name, params = {}) {
-  stack.push({ name, params });
+  const from = current();
+  if (from) from.scroll = activeScroll();
+  stack.push({ name, params, scroll: 0 });
   history.pushState({ depth: stack.length }, '');
   syncBackButton();
-  await render(name, params);
+  await render(name, params, { kind: 'forward', scroll: 0 });
 }
 
+/**
+ * Назад — на прежнее место прокрутки.
+ *
+ * Раньше экран рисовался заново с начала, и длинный список после
+ * возврата из карточки обращения оказывался наверху: человек терял
+ * ровно то место, откуда ушёл.
+ */
 export async function back() {
   if (stack.length <= 1) return;
   stack.pop();
   const screen = current();
   syncBackButton();
-  await render(screen.name, screen.params);
+  await render(screen.name, screen.params, { kind: 'back', scroll: screen.scroll ?? 0 });
 }
 
-/** Перерисовать текущий экран, не трогая стек. */
+/**
+ * Соседний вид того же места — без шага «назад».
+ *
+ * Доски ленты «Объявления дома / Соседи предлагают» ходили через `go`:
+ * каждый тап клал экран в стек, и «Назад» приходилось жать столько раз,
+ * сколько человек переключал. Со сдвигом каждый тап ещё и въезжал бы
+ * справа. `swap` заменяет верхнюю запись и растворяет.
+ */
+export async function swap(name, params = {}) {
+  if (stack.length === 0) return reset(name, params);
+  stack[stack.length - 1] = { name, params, scroll: 0 };
+  syncBackButton();
+  await render(name, params, { kind: 'fade', scroll: 0 });
+}
+
+/** Перерисовать текущий экран, не трогая стек. Без анимации — см. спеку. */
 export async function refresh() {
   const screen = current();
-  if (screen) await render(screen.name, screen.params);
+  if (screen) await render(screen.name, screen.params, { kind: 'none', scroll: 0 });
 }
 
 function syncBackButton() {

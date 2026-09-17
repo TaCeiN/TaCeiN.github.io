@@ -1,6 +1,12 @@
 import { esc, html, formatDate, toast, withLoading, loadingState, errorState, emptyState } from '../app/ui.js';
 import { dateField, handleDateAction } from '../app/datepicker.js';
 import { API_BASE } from '../app/config.js';
+import { renderNav, setSignedIn, searchBar, enterSearch, pageHead } from '../dispatcher/nav.js';
+import { eventsSection, eventsState, handleEventsAction, unseenTotal } from './events.js';
+import {
+  coverageSection, coverageState, handleCoverageAction, mountCoverage, bindCoverageSearch,
+  LEVEL_LABEL, LEVEL_COLOR,
+} from './coverage.js';
 
 /**
  * Кабинет оператора сервиса.
@@ -99,6 +105,21 @@ const api = {
   orgDispatcher: (id, login) =>
     request('POST', `/api/admin/orgs/${id}/dispatcher`, login ? { login } : {}),
 
+  events: ({ kind, unseenOnly } = {}) => {
+    const params = new URLSearchParams();
+    if (kind) params.set('kind', kind);
+    if (unseenOnly) params.set('unseen', '1');
+    return request('GET', `/api/admin/events?${params}`);
+  },
+  eventsSeen: (items) => request('POST', '/api/admin/events/seen', { items }),
+
+  coverageRegions: () => request('GET', '/api/admin/coverage/regions'),
+  coveragePlaces: (region) => request('GET', `/api/admin/coverage/places?region=${encodeURIComponent(region)}`),
+  coverageStreets: (region, place) =>
+    request('GET', `/api/admin/coverage/streets?region=${encodeURIComponent(region)}&place=${encodeURIComponent(place)}`),
+  coveragePoints: (region, bbox) =>
+    request('GET', `/api/admin/coverage/points?region=${encodeURIComponent(region)}&bbox=${bbox.join(',')}`),
+
   tables: () => request('GET', '/api/admin/tables'),
   table: (name, page, q) => request(
     'GET',
@@ -121,7 +142,10 @@ const FORMS = [
 
 const state = {
   me: null,
-  tab: 'houses',
+  /** События — первый раздел: оператор заходит узнать, что без него не разберут */
+  tab: 'events',
+  /** Новых событий — для счётчика на вкладке */
+  unseen: 0,
   /** Результат поиска домов: null — ещё не искали, [] — не нашлось */
   houses: null,
   houseQuery: '',
@@ -168,21 +192,37 @@ function renderLogin(error) {
 }
 
 const TABS = [
-  { id: 'houses', label: 'Дома' },
-  { id: 'claims', label: 'Заявки на подключение' },
-  { id: 'users', label: 'Жители' },
-  { id: 'orgs', label: 'Организации' },
-  { id: 'tables', label: 'База' },
-  { id: 'audit', label: 'Журнал' },
+  { id: 'events', label: 'События', icon: 'bell', tone: 'red' },
+  { id: 'coverage', label: 'Покрытие', icon: 'map', tone: 'green' },
+  { id: 'houses', label: 'Дома', icon: 'house', tone: 'blue' },
+  { id: 'claims', label: 'Заявки на подключение', icon: 'inbox', tone: 'orange' },
+  { id: 'users', label: 'Жители', icon: 'people', tone: 'violet' },
+  { id: 'orgs', label: 'Организации', icon: 'org', tone: 'teal' },
+  { id: 'tables', label: 'База', icon: 'db', tone: 'gray' },
+  { id: 'audit', label: 'Журнал', icon: 'log', tone: 'pink' },
 ];
 
+/** Заголовки разделов; у «Событий» и «Покрытия» свои — с переключателями справа */
+const PAGE_HEAD = {
+  houses: ['Дома', 'Поиск по адресу — среди домов реестра и адресов из квитанций жителей'],
+  claims: ['Заявки на подключение', 'Жители просят подключить дом, за которым никто не стоит'],
+  users: ['Жители', 'Поиск человека по фамилии или телефону'],
+  orgs: ['Организации', 'Управляющие компании, ТСЖ и ЖСК из реестра и их кабинеты'],
+  tables: ['База', 'Таблицы базы — только чтение'],
+  audit: ['Журнал', 'Каждое действие оператора, меняющее данные'],
+};
+
+function sectionHead() {
+  const head = PAGE_HEAD[state.tab];
+  // В карточке дома или жителя заголовок — сам адрес или имя
+  if (!head || (state.tab === 'houses' && state.openHouse) || (state.tab === 'users' && state.openUser)) return '';
+  return pageHead(...head);
+}
+
+/** Меню живёт в боковой панели; вызов оставлен там, где раньше рисовались вкладки */
 function tabsBar() {
-  return html`
-    <div class="dsp-tabs">
-      ${TABS.map((t) => html`
-        <button class="dsp-tab ${state.tab === t.id ? 'on' : ''}"
-                data-action="tab" data-tab="${esc(t.id)}">${esc(t.label)}</button>`).join('')}
-    </div>`;
+  renderNav('#admNav', TABS.map((t) => ({ ...t, count: t.id === 'events' ? state.unseen : 0 })), state.tab, 'tab');
+  return '';
 }
 
 /**
@@ -217,11 +257,7 @@ function housesSection(found, q) {
 
   return html`
     <div class="dsp-card">
-      <h2>Дома</h2>
-      <div class="field-label">Адрес или его часть</div>
-      <input type="text" id="admHouseQ" value="${esc(q ?? '')}"
-             placeholder="Например: Ленина 85">
-      <button class="btn-primary" data-action="find-houses">Найти</button>
+      ${searchBar({ id: 'admHouseQ', value: q, placeholder: 'Адрес или его часть, например: Ленина 85', action: 'find-houses' })}
       ${rows === null ? html`
         <p class="dsp-dim">
           Начните с адреса — можно часть: «Ленина 85», «Батайск Мира».
@@ -234,6 +270,7 @@ function housesSection(found, q) {
       ? emptyState('Ничего не нашлось', 'Проверьте написание адреса')
       : html`
         <div class="dsp-card">
+          <div class="dsp-table-wrap">
           <table class="dsp-table">
             <thead><tr><th>Адрес</th><th>Управление</th><th>Жители</th><th></th></tr></thead>
             <tbody>
@@ -253,96 +290,166 @@ function housesSection(found, q) {
                 </tr>`).join('')}
             </tbody>
           </table>
+          </div>
           ${searchTail(found)}
         </div>`}`;
 }
 
 function houseCardSection(h) {
+  const cov = h.coverage ?? { level: 'address', isPrivate: false };
+  const reg = h.registry;
+  const org = reg?.org;
+  const yesNo = (v) => (v === true ? 'да' : v === false ? 'нет' : '—');
+
   return html`
-    <div class="dsp-card">
-      <button class="dsp-mini" data-action="back-houses">← К поиску</button>
-      <h2>${esc(h.address)}</h2>
-      <p class="dsp-dim">${esc(h.houseKey)}</p>
+    <button class="dsp-back" data-action="back-houses">← К поиску</button>
 
-      <div class="field-label">Форма управления</div>
-      <select data-action="set-form" data-key="${esc(h.houseKey)}">
-        ${FORMS.map(([value, label]) => html`
-          <option value="${esc(value)}" ${h.form === value ? 'selected' : ''}>
-            ${esc(label)}
-          </option>`).join('')}
-      </select>
-      ${h.orgName ? html`<p class="dsp-dim">Организация: ${esc(h.orgName)}</p>` : ''}
-      ${h.setBy ? html`<p class="dsp-dim">Проставил: ${esc(h.setBy)}</p>` : ''}
-
-      <div class="field-label">Подключить организацию по ИНН</div>
-      <p class="dsp-dim">
-        Организация и её дома тянутся из ГИС ЖКХ — это импорт, а не ручной
-        ввод. Так ключ дома совпадёт с тем, что придёт из квитанции жителя.
-      </p>
-      <input type="text" id="admOrgInn" placeholder="10 или 12 цифр" inputmode="numeric">
-      <button class="btn-primary secondary" data-action="connect-org"
-              data-key="${esc(h.houseKey)}">Подключить</button>
+    <div class="dsp-card dsp-house-head">
+      <div class="dsp-house-title">
+        <h2>${esc(h.address)}</h2>
+        <div class="dsp-dim" title="Ключ дома">${esc(h.houseKey)}</div>
+      </div>
+      <div class="dsp-house-level">
+        ${cov.isPrivate
+          ? '<span class="dsp-level" style="--c:#8b5cf6">частный дом</span>'
+          : html`<span class="dsp-level" style="--c:${LEVEL_COLOR[cov.level]}">${esc(LEVEL_LABEL[cov.level])}</span>`}
+        <p class="dsp-dim">${esc(nextStep(cov))}</p>
+      </div>
     </div>
 
-    <div class="dsp-card">
-      <h2>Председатель</h2>
-      ${h.chairman ? html`
-        <p>${esc(h.chairman.name)}${h.chairman.flat ? `, кв. ${esc(h.chairman.flat)}` : ''}</p>
-        <button class="dsp-mini danger" data-action="revoke-chairman"
-                data-id="${esc(h.chairman.id)}">Снять с должности</button>`
-        : html`
-        <p class="dsp-dim">
-          Председателя нет — значит подтверждать жителей в этом доме некому,
-          и дом заперт. Выберите его из списка жителей ниже.
-        </p>`}
-    </div>
+    <div class="dsp-detail">
+      <div>
+        <div class="dsp-card">
+          <h2>Жители · ${h.residents.length}</h2>
+          ${h.residents.length === 0
+            ? '<p class="dsp-dim">В доме пока никого нет</p>'
+            : html`
+            <div class="dsp-table-wrap">
+            <table class="dsp-table">
+              <thead><tr><th>Кто</th><th>Квартира</th><th>Статус</th><th><span class="sr-only">Действия</span></th></tr></thead>
+              <tbody>
+                ${h.residents.map((r) => html`
+                  <tr>
+                    <td>${esc(r.name)}<div class="dsp-dim">${r.viaMax ? 'через MAX' : 'браузер'}</div></td>
+                    <td>${esc(r.flat || '—')}</td>
+                    <td>${esc(statusLabel(r.status))}${r.role === 'owner' ? ' · собственник' : ''}</td>
+                    <td class="dsp-row-actions">
+                      ${h.chairman ? '' : html`
+                        <button class="dsp-mini" data-action="make-chairman"
+                                data-key="${esc(h.houseKey)}" data-id="${esc(r.userId)}">
+                          Назначить председателем
+                        </button>`}
+                    </td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+            </div>`}
+        </div>
 
-    <div class="dsp-card">
-      <h2>Жители · ${h.residents.length}</h2>
-      ${h.residents.length === 0
-        ? '<p class="dsp-dim">В доме пока никого нет</p>'
-        : html`
-        <table class="dsp-table">
-          <thead><tr><th>Кто</th><th>Квартира</th><th>Статус</th><th></th></tr></thead>
-          <tbody>
-            ${h.residents.map((r) => html`
-              <tr>
-                <td>${esc(r.name)}<div class="dsp-dim">${r.viaMax ? 'через MAX' : 'браузер'}</div></td>
-                <td>${esc(r.flat || '—')}</td>
-                <td>${esc(statusLabel(r.status))}${r.role === 'owner' ? ' · собственник' : ''}</td>
-                <td>
-                  ${h.chairman ? '' : html`
-                    <button class="dsp-mini" data-action="make-chairman"
-                            data-key="${esc(h.houseKey)}" data-id="${esc(r.userId)}">
-                      Назначить председателем
-                    </button>`}
-                </td>
-              </tr>`).join('')}
-          </tbody>
-        </table>`}
-    </div>
+        <div class="dsp-card">
+          <h2>Обращения · ${h.requests.length}</h2>
+          <p class="dsp-dim">
+            Только чтение. Обращение нельзя ни удалить, ни закрыть: у жителя
+            должно остаться доказательство, которое никто не сотрёт.
+          </p>
+          ${h.requests.length === 0
+            ? '<p class="dsp-dim">Обращений нет</p>'
+            : html`
+            <div class="dsp-table-wrap">
+            <table class="dsp-table">
+              <thead><tr><th>Когда</th><th>Что</th><th>Статус</th></tr></thead>
+              <tbody>
+                ${h.requests.map((r) => html`
+                  <tr>
+                    <td class="dsp-muted-cell dsp-nowrap">${esc(formatDate(r.createdAt))}</td>
+                    <td>${esc(r.title)}<div class="dsp-dim">${esc(r.category)}</div></td>
+                    <td>${esc(r.statusLabel ?? r.status)}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+            </div>`}
+        </div>
+      </div>
 
-    <div class="dsp-card">
-      <h2>Обращения · ${h.requests.length}</h2>
-      <p class="dsp-dim">
-        Только чтение. Обращение нельзя ни удалить, ни закрыть: у жителя
-        должно остаться доказательство, которое никто не сотрёт.
-      </p>
-      ${h.requests.length === 0
-        ? '<p class="dsp-dim">Обращений нет</p>'
-        : html`
-        <table class="dsp-table">
-          <thead><tr><th>Когда</th><th>Что</th><th>Статус</th></tr></thead>
-          <tbody>
-            ${h.requests.map((r) => html`
-              <tr>
-                <td>${esc(formatDate(r.createdAt))}</td>
-                <td>${esc(r.title)}<div class="dsp-dim">${esc(r.category)}</div></td>
-                <td>${esc(r.statusLabel ?? r.status)}</td>
-              </tr>`).join('')}
-          </tbody>
-        </table>`}
+      <aside>
+        <div class="dsp-card">
+          <h2>Управление</h2>
+          <div class="dsp-field">
+            <span>Форма управления</span>
+            <select class="dsp-select" data-action="set-form" data-key="${esc(h.houseKey)}">
+              ${FORMS.map(([value, label]) => html`
+                <option value="${esc(value)}" ${h.form === value ? 'selected' : ''}>
+                  ${esc(label)}
+                </option>`).join('')}
+            </select>
+          </div>
+          ${h.orgName ? html`<p class="dsp-dim">Организация: ${esc(h.orgName)}</p>` : ''}
+          ${h.setBy ? html`<p class="dsp-dim">Проставил: ${esc(h.setBy)}</p>` : ''}
+
+          <div class="dsp-field dsp-gap">
+            <span>Подключить организацию по ИНН</span>
+            <div class="dsp-inline">
+              <input type="text" id="admOrgInn" placeholder="10 или 12 цифр" inputmode="numeric">
+              <button class="dsp-act primary" data-action="connect-org"
+                      data-key="${esc(h.houseKey)}">Подключить</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="dsp-card">
+          <h2>Председатель</h2>
+          ${h.chairman ? html`
+            <p>${esc(h.chairman.name)}${h.chairman.flat ? `, кв. ${esc(h.chairman.flat)}` : ''}</p>
+            <button class="dsp-mini danger" data-action="revoke-chairman"
+                    data-id="${esc(h.chairman.id)}">Снять с должности</button>`
+            : html`
+            <p class="dsp-dim">
+              Председателя нет — подтверждать жителей некому. Назначьте его
+              из списка жителей слева.
+            </p>`}
+        </div>
+
+        <div class="dsp-card">
+          <h2>Реестр</h2>
+          ${!reg ? html`
+            <p class="dsp-dim">
+              Дома нет в наборе данных региона: адрес пришёл из квитанции жителя.
+              Проверьте, правильно ли житель указал дом.
+            </p>` : html`
+            <dl class="dsp-kv">
+              <dt>Форма по реестру</dt><dd>${esc(FORM_LABELS[reg.form] ?? 'нет в реестре фонда')}</dd>
+              <dt>Многоквартирный</dt><dd>${yesNo(reg.garMkd)}${reg.garFlats ? ` · квартир в ГАР ${reg.garFlats}` : ''}</dd>
+              <dt>Кадастровый №</dt><dd>${esc(reg.cadastralNumber ?? '—')}</dd>
+              <dt>На карте</dt><dd>${reg.lat !== null ? 'есть точка' : 'координат нет'}</dd>
+            </dl>
+            ${org ? html`
+              <div class="dsp-org">
+                <div class="dsp-org-name">${esc(org.name)}</div>
+                <div class="dsp-dim">ИНН ${esc(org.inn)}${org.licenseNumber ? ` · лицензия ${esc(org.licenseNumber)}` : ''}</div>
+                <div class="dsp-contacts">
+                  ${org.phone ? html`<a href="tel:${esc(org.phone)}">${esc(org.phone)}</a>` : ''}
+                  ${org.email ? html`<a href="mailto:${esc(org.email)}">${esc(org.email)}</a>` : ''}
+                  ${org.site ? html`<span>${esc(org.site)}</span>` : ''}
+                  ${!org.phone && !org.email && !org.site ? '<span class="dsp-dim">контактов нет</span>' : ''}
+                </div>
+                <div class="dsp-dim">${org.hasCabinet ? 'Кабинет УК заведён' : 'Кабинета УК нет'}</div>
+              </div>` : '<p class="dsp-dim">Организация в реестре не указана</p>'}`}
+        </div>
+      </aside>
     </div>`;
+}
+
+const FORM_LABELS = Object.fromEntries(FORMS);
+
+/** Что сделать оператору, чтобы дом поднялся на следующий уровень покрытия */
+function nextStep(cov) {
+  if (cov.isPrivate) return 'Договариваться не с кем: жалобы жителей разбирает оператор.';
+  return {
+    address: 'Неизвестно, многоквартирный ли дом и кто им управляет. Проставьте форму управления.',
+    kind: 'Нет организации с контактом. Подключите организацию по ИНН или назначьте председателя.',
+    contact: 'Есть с кем договориться. Подключённым дом станет, когда у УК появится кабинет или у дома — председатель.',
+    agreed: 'Дом подключён: есть председатель или кабинет УК.',
+  }[cov.level];
 }
 
 function statusLabel(status) {
@@ -359,25 +466,23 @@ function claimsSection(rows) {
 
   return html`
     <div class="dsp-card">
-      <h2>Заявки на подключение дома</h2>
       <p class="dsp-dim">
         Житель просит подключить дом, за которым никто не стоит. Решить —
         значит разобраться с домом: проставить форму, подключить организацию
         или назначить председателя.
       </p>
+      <div class="dsp-table-wrap">
       <table class="dsp-table">
-        <thead><tr><th>Дом</th><th>Кто просит</th><th>Когда</th><th></th></tr></thead>
+        <thead><tr><th>Когда</th><th>Адрес</th><th>Кто просит</th><th><span class="sr-only">Действия</span></th></tr></thead>
         <tbody>
           ${rows.map((r) => html`
             <tr>
-              <td>
-                ${esc(r.houseKey)}
-                <div><button class="dsp-mini" data-action="open-house"
-                             data-key="${esc(r.houseKey)}">Открыть дом</button></div>
-              </td>
+              <td class="dsp-muted-cell dsp-nowrap">${esc(formatDate(r.createdAt))}</td>
+              <td class="dsp-addr-cell">${esc(r.address)}</td>
               <td>${esc(r.userName)}${r.note ? html`<div class="dsp-dim">«${esc(r.note)}»</div>` : ''}</td>
-              <td>${esc(formatDate(r.createdAt))}</td>
-              <td>
+              <td class="dsp-row-actions">
+                <button class="dsp-mini" data-action="open-house"
+                        data-key="${esc(r.houseKey)}">Дом</button>
                 <button class="dsp-mini" data-action="decide-claim"
                         data-id="${esc(r.id)}" data-status="done">Решено</button>
                 <button class="dsp-mini danger" data-action="decide-claim"
@@ -386,6 +491,7 @@ function claimsSection(rows) {
             </tr>`).join('')}
         </tbody>
       </table>
+      </div>
     </div>`;
 }
 
@@ -396,10 +502,7 @@ function usersSection(found, q) {
 
   return html`
     <div class="dsp-card">
-      <h2>Жители</h2>
-      <div class="field-label">Имя или телефон</div>
-      <input type="text" id="admUserQ" value="${esc(q ?? '')}" placeholder="Например: Петров">
-      <button class="btn-primary" data-action="find-users">Найти</button>
+      ${searchBar({ id: 'admUserQ', value: q, placeholder: 'Фамилия или телефон, например: Петров', action: 'find-users' })}
       ${rows === null ? html`
         <p class="dsp-dim">
           Найдите человека по фамилии или телефону — например «Петров»
@@ -411,6 +514,7 @@ function usersSection(found, q) {
       ? emptyState('Никого не нашлось', 'Проверьте написание')
       : html`
         <div class="dsp-card">
+          <div class="dsp-table-wrap">
           <table class="dsp-table">
             <thead><tr><th>Кто</th><th>Телефон</th><th>Адресов</th><th></th></tr></thead>
             <tbody>
@@ -424,6 +528,7 @@ function usersSection(found, q) {
                 </tr>`).join('')}
             </tbody>
           </table>
+          </div>
           ${searchTail(found)}
         </div>`}`;
 }
@@ -475,16 +580,14 @@ function orgsSection(found, q) {
 
   return html`
     <div class="dsp-card">
-      <h2>Организации</h2>
-      <div class="field-label">Название или ИНН</div>
-      <input type="text" id="admOrgQ" value="${esc(q ?? '')}" placeholder="Например: Трианон">
-      <button class="btn-primary" data-action="find-orgs">Найти</button>
+      ${searchBar({ id: 'admOrgQ', value: q, placeholder: 'Название или ИНН, например: Трианон', action: 'find-orgs' })}
     </div>
 
     ${rows === null ? '' : rows.length === 0
       ? emptyState('Ничего не нашлось', 'Организация появляется в базе после импорта реестра')
       : html`
         <div class="dsp-card">
+          <div class="dsp-table-wrap">
           <table class="dsp-table">
             <thead><tr><th>Организация</th><th>Домов</th><th>Кабинет</th><th></th></tr></thead>
             <tbody>
@@ -507,6 +610,7 @@ function orgsSection(found, q) {
                 </tr>`).join('')}
             </tbody>
           </table>
+          </div>
           ${searchTail(found)}
         </div>`}`;
 }
@@ -516,15 +620,14 @@ function orgsSection(found, q) {
 function tablesSection(list, page) {
   return html`
     <div class="dsp-card">
-      <h2>База</h2>
       <p class="dsp-dim">
         Только чтение. Менять данные можно действиями в разделах выше — они
         знают правила, а правка ячейки ломает их тихо. Хеши паролей
         и токены сессий здесь не показываются никогда.
       </p>
-      <div class="dsp-tabs">
+      <div class="dsp-chips">
         ${list.map((t) => html`
-          <button class="dsp-tab ${state.tableName === t.name ? 'on' : ''}"
+          <button class="dsp-chip ${state.tableName === t.name ? 'on' : ''}"
                   data-action="open-table" data-name="${esc(t.name)}">
             ${esc(t.name)} · ${t.rows}
           </button>`).join('')}
@@ -534,9 +637,7 @@ function tablesSection(list, page) {
     ${!page ? '' : html`
       <div class="dsp-card">
         <h2>${esc(page.name)} · ${page.total}</h2>
-        <input type="text" id="admTableQ" value="${esc(state.tableQuery)}"
-               placeholder="Поиск по текстовым колонкам">
-        <button class="dsp-mini" data-action="search-table">Найти</button>
+        ${searchBar({ id: 'admTableQ', value: state.tableQuery, placeholder: 'Поиск по текстовым колонкам', action: 'search-table' })}
 
         <div style="overflow-x:auto">
           <table class="dsp-table">
@@ -598,26 +699,34 @@ function auditSection(page) {
 
   return html`
     <div class="dsp-card">
-      <h2>Журнал действий</h2>
       <p class="dsp-dim">
         Каждое действие оператора, меняющее данные. Записи не удаляются
         и переживают выключение учётки.
       </p>
 
-      <div class="field-label">Показать записи с</div>
-      ${dateField({ id: 'admAuditFrom', value: state.auditFrom, placeholder: 'С самого начала' })}
-      <div class="field-label">по</div>
-      ${dateField({ id: 'admAuditTo', value: state.auditTo, placeholder: 'По сегодня' })}
-      <div class="field-label">Действие</div>
-      <select id="admAuditAction" class="dsp-select" data-action="audit-action">
-        <option value="">любое</option>
-        ${auditActionOptions(page.actions ?? [])}
-      </select>
-
-      <button class="dsp-mini" data-action="audit-filter">Показать</button>
-      ${filtered
-        ? '<button class="dsp-mini" data-action="audit-reset">Показать всё</button>'
-        : ''}
+      <div class="dsp-filterbar">
+        <div class="dsp-field">
+          <span>Записи с</span>
+          ${dateField({ id: 'admAuditFrom', value: state.auditFrom, placeholder: 'С самого начала' })}
+        </div>
+        <div class="dsp-field">
+          <span>по</span>
+          ${dateField({ id: 'admAuditTo', value: state.auditTo, placeholder: 'По сегодня' })}
+        </div>
+        <label class="dsp-field wide">
+          <span>Действие</span>
+          <select id="admAuditAction" class="dsp-select" data-action="audit-action">
+            <option value="">любое</option>
+            ${auditActionOptions(page.actions ?? [])}
+          </select>
+        </label>
+        <div class="dsp-filterbar-actions">
+          <button class="dsp-act primary" data-action="audit-filter">Показать</button>
+          ${filtered
+            ? '<button class="dsp-act" data-action="audit-reset">Сбросить</button>'
+            : ''}
+        </div>
+      </div>
     </div>
 
     ${page.rows.length === 0
@@ -629,6 +738,7 @@ function auditSection(page) {
         )
       : html`
         <div class="dsp-card">
+          <div class="dsp-table-wrap">
           <table class="dsp-table">
             <thead><tr><th>Когда</th><th>Кто</th><th>Что</th><th>Над чем</th></tr></thead>
             <tbody>
@@ -641,27 +751,45 @@ function auditSection(page) {
               -->
               ${page.rows.map((r) => html`
                 <tr>
-                  <td>${esc(formatDate(r.createdAt))}</td>
+                  <td class="dsp-muted-cell dsp-nowrap">${esc(formatDate(r.createdAt))}</td>
                   <td>${esc(r.adminName)}</td>
                   <td>${esc(r.summary)}</td>
                   <td title="${esc(r.targetId)}">${esc(r.targetLabel ?? r.targetId)}</td>
                 </tr>`).join('')}
             </tbody>
           </table>
-
-          <div class="dsp-dim">
-            Страница ${page.page} из ${pages} · всего ${page.total}
           </div>
-          <button class="dsp-mini" data-action="audit-page" data-page="${page.page - 1}"
-                  ${page.page <= 1 ? 'disabled' : ''}>Назад</button>
-          <button class="dsp-mini" data-action="audit-page" data-page="${page.page + 1}"
-                  ${page.page * page.pageSize >= page.total ? 'disabled' : ''}>Вперёд</button>
+
+          <div class="dsp-pager">
+            <span class="dsp-dim">Страница ${page.page} из ${pages} · всего ${page.total}</span>
+            <button class="dsp-mini" data-action="audit-page" data-page="${page.page - 1}"
+                    ${page.page <= 1 ? 'disabled' : ''}>Назад</button>
+            <button class="dsp-mini" data-action="audit-page" data-page="${page.page + 1}"
+                    ${page.page * page.pageSize >= page.total ? 'disabled' : ''}>Вперёд</button>
+          </div>
         </div>`}`;
 }
 
 /* ─────────────── отрисовка ─────────────── */
 
 async function renderTab() {
+  if (state.tab === 'events') {
+    const data = await api.events({ kind: eventsState.kind, unseenOnly: eventsState.unseenOnly });
+    state.unseen = unseenTotal(data.unseen);
+    return eventsSection(data);
+  }
+
+  if (state.tab === 'coverage') {
+    const { regions } = await api.coverageRegions();
+    if (!coverageState.region && regions[0]) coverageState.region = regions[0].code;
+    if (!regions.length) return coverageSection([], null, null);
+    const [data, streets] = await Promise.all([
+      api.coveragePlaces(coverageState.region),
+      coverageState.place ? api.coverageStreets(coverageState.region, coverageState.place).then((r) => r.streets) : null,
+    ]);
+    return coverageSection(regions, data, streets);
+  }
+
   if (state.tab === 'audit') {
     return auditSection(await api.audit({
       page: state.auditPage,
@@ -699,17 +827,25 @@ async function renderTab() {
 async function render() {
   if (!state.me) {
     main().innerHTML = renderLogin(null);
-    document.querySelector('#admLogout').hidden = true;
-    document.querySelector('#admWho').textContent = '';
+    setSignedIn(null);
     return;
   }
 
-  document.querySelector('#admLogout').hidden = false;
-  document.querySelector('#admWho').textContent = state.me.name;
+  setSignedIn(state.me.name);
 
   main().innerHTML = tabsBar() + loadingState('Загружаем…');
   try {
-    main().innerHTML = tabsBar() + await renderTab();
+    const body = await renderTab();
+    // Вкладки рисуются после раздела: счётчик новых событий знает только он
+    main().innerHTML = tabsBar() + sectionHead() + body;
+    if (state.tab === 'coverage') {
+      bindCoverageSearch();
+      await mountCoverage({
+        api,
+        render,
+        openHouse: (key) => { state.tab = 'houses'; state.openHouse = key; render(); },
+      });
+    }
   } catch (error) {
     main().innerHTML = tabsBar() + errorState(error, 'admin');
   }
@@ -720,6 +856,8 @@ async function render() {
 async function handleAction(action, target) {
   // Календарь общий на весь проект: сам рисует шторку и пишет значение в поле
   if (await handleDateAction(action, target)) return;
+  if (await handleEventsAction(action, target, { api, render })) return;
+  if (await handleCoverageAction(action, target, { render })) return;
 
   switch (action) {
     case 'do-login': {
@@ -844,6 +982,7 @@ async function handleAction(action, target) {
     }
 
     case 'open-user': {
+      state.tab = 'users';
       state.openUser = target.dataset.id;
       await render();
       break;
@@ -997,6 +1136,7 @@ document.addEventListener('change', (event) => {
 // Enter в поле пароля — обычное ожидание от формы входа
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Enter') return;
+  if (enterSearch(event, handleAction)) return;
   const button = document.querySelector('[data-action="do-login"]');
   if (button && document.querySelector('#admPass')) handleAction('do-login', button);
 });

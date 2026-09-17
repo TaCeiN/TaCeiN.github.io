@@ -74,7 +74,29 @@ function councilCard(state) {
   const claims = council.houses.reduce((n, h) => n + h.pendingClaims, 0);
   const requests = council.houses.reduce((n, h) => n + (h.awaitingRequests ?? 0), 0);
   const total = claims + requests;
-  if (total === 0) return '';
+
+  /**
+   * ПУСТАЯ ОЧЕРЕДЬ — ЭТО НЕ ПОВОД ПРЯТАТЬ РАЗДЕЛ.
+   *
+   * Здесь стояло `if (total === 0) return ''`, и хуже всего это работало
+   * ровно в тот момент, ради которого раздел существует: у только что
+   * подключённого дома заявок нет (их закрывает само назначение),
+   * обращений ещё нет — и человек, которого минуту назад сделали
+   * председателем, не видел на главной ни одного следа своей роли.
+   * Проверено на живом стенде 11 сентября.
+   *
+   * Комментарий к прошлой правке этого же места уже говорил, чем
+   * заканчивается пропавшая карточка: «раздел оставался достижим только
+   * из профиля, куда пожилой человек не пойдёт искать то, о чём
+   * не знает». Тогда добавили второй счётчик; случай, где нулевые оба,
+   * правка не покрыла.
+   *
+   * Поэтому карточка теперь есть всегда, а меняется только её вторая
+   * строка: дела — числом, их отсутствие — приглашением.
+   */
+  const line = total > 0
+    ? `${total} ${plural(total, 'дело ждёт', 'дела ждут', 'дел ждут')} вашего внимания`
+    : 'Подтверждение соседей, объявления, опросы и обращения дома';
 
   return html`
     <button class="alert" data-action="council">
@@ -83,9 +105,7 @@ function councilCard(state) {
       </span>
       <div>
         <div class="t">Совет дома</div>
-        <div class="d">
-          ${total} ${plural(total, 'дело ждёт', 'дела ждут', 'дел ждут')} вашего внимания
-        </div>
+        <div class="d">${esc(line)}</div>
       </div>
       <span class="chev"><svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
     </button>`;
@@ -112,6 +132,43 @@ export function inviteCodeCard() {
       <div class="field-error" id="inviteErr"></div>
       <button class="btn-primary secondary" data-action="redeem-invite">Войти по коду</button>
     </div>`;
+}
+
+/**
+ * Подпись над суммой на карточке оплаты.
+ *
+ * «К оплате» — слово владельца. Честности в нём самом нет: оно читается
+ * как требование управляющей компании, а приложение статуса оплаты
+ * НЕ ЗНАЕТ — ни из QR, ни из биллинга УК, ни из ГИС ЖКХ. Поэтому под
+ * суммой обязательна оговорка из payNote(), и убирать её нельзя.
+ */
+function payTitle(bill) {
+  // Поля нет вовсе — старый сервер под новым фронтом
+  if (bill?.outstandingKopecks == null) return 'Начисления';
+  if (!bill.hasBills) return 'Начисления';
+  return bill.unpaidCount === 0 ? 'Всё отмечено оплаченным' : 'К оплате';
+}
+
+/**
+ * Строка под суммой: источник знания и объём.
+ *
+ * Число начислений здесь не для красоты — сумма собрана из нескольких
+ * квитанций разных организаций и за разные месяцы, и без пояснения
+ * выглядит завышенной. При просрочке важнее сказать про срок: так же
+ * ведёт себя экран «Оплата ЖКУ», а два экрана про одни деньги обязаны
+ * вести себя одинаково.
+ */
+function payNote(bill) {
+  // Молчим, а не врём: «квитанций нет» здесь означало бы, что их нет
+  // у человека, — а на деле их нет только у нас
+  if (bill?.outstandingKopecks == null) return '';
+  if (!bill.hasBills) return 'Квитанций пока нет';
+  if (bill.overdueCount > 0) return `по вашим отметкам · срок прошёл у ${bill.overdueCount}`;
+  if (bill.unpaidCount > 0) {
+    const word = plural(bill.unpaidCount, 'начисление', 'начисления', 'начислений');
+    return `по вашим отметкам · ${bill.unpaidCount} ${word}`;
+  }
+  return 'по вашим отметкам';
 }
 
 export async function renderHome(state) {
@@ -237,14 +294,30 @@ export async function renderHome(state) {
 
   return html`
     <div class="idrow">
-      <div>
-        <button class="locpill tappable" data-action="properties">
-          ${esc(propertyTitle(property))}
-          ${property.status === 'pending'
-            ? '<span class="pill new" style="margin-left:2px">ожидает</span>'
-            : ''}
-          <svg viewBox="0 0 12 12" fill="none"><path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
+      <div style="min-width:0">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="locpill tappable" data-action="properties">
+            ${esc(propertyTitle(property))}
+            <svg viewBox="0 0 12 12" fill="none"><path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <!--
+            Пометка «ожидает» — отдельная кнопка, а не часть кнопки адреса.
+
+            Раньше она стояла внутри кнопки, ведущей к списку квартир, а под
+            шапкой висели две карточки: объяснение с «Проверить» и поле кода
+            приглашения. При каждом входе, над оплатой, хотя нужны они
+            в основном один раз. Теперь всё это открывается шторкой по нажатию
+            на пометку, а главная ожидающего жителя выглядит так же, как
+            у подтверждённого. Стрелка нужна, чтобы было видно: нажимается.
+          -->
+          ${property.status === 'pending' ? html`
+            <button type="button" class="pill new tappable" data-action="pending-sheet"
+                    aria-haspopup="dialog"
+                    style="display:inline-flex;align-items:center;gap:3px;padding:7px 10px">
+              ожидает
+              <svg width="10" height="10" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M5 3L9 7L5 11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>` : ''}
+        </div>
         ${property.ukName ? html`
           <div class="greetline"><span class="dot"></span>${esc(property.ukName)}</div>`
           : ''}
@@ -254,23 +327,13 @@ export async function renderHome(state) {
       </button>
     </div>
 
-    ${me.pendingRequests?.length ? renderAccessRequests(me.pendingRequests) : ''}
+    <!--
+      Порядок: действующая авария, потом деньги, потом всё остальное.
 
-    ${property.status === 'pending' ? html`
-      <div class="dt-card">
-        <div class="meter-name">Доступ к дому ещё не подтверждён</div>
-        <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:6px">
-          ${waitingText(property)}
-        </div>
-        <div class="dt-p" style="font-size:14px;color:var(--tx-2)">
-          ${property.houseManagement?.orgName
-            ? 'Начисления, счётчики, аналитика и обращение в управляющую компанию по этой квартире работают уже сейчас.'
-            : 'Начисления, счётчики, аналитика и обращение по этой квартире работают уже сейчас — запись сохранится, даже если адресата пока нет.'}
-        </div>
-      </div>` : ''}
-
-    ${councilCard(state)}
-
+      Оплата — главная причина открыть приложение, и она стоит первой.
+      Единственное, что выше неё, — отключение: «нет воды до 18:00» важнее
+      суммы, а висит баннер только пока отключение действует.
+    -->
     ${outage ? html`
       <button class="alert" data-action="post" data-id="${esc(outage.id)}">
         <span class="ic"><svg width="20" height="20" viewBox="0 0 22 22" fill="none"><path d="M11 2L20 19H2L11 2Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M11 9V13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="11" cy="15.6" r="1" fill="currentColor"/></svg></span>
@@ -280,34 +343,25 @@ export async function renderHome(state) {
 
     <button class="pay-card tappable" data-action="payment">
       <div class="pay-card-top">
-        <!--
-          Подпись приходит с сервера и всегда с годом. Своя сборка год
-          выбрасывала: в августе начисление за апрель подписывалось
-          «Начислено за апрель» и читалось как долг за текущий месяц.
-          Если начисление старше прошлого месяца, говорим об этом прямо —
-          свежее у нас просто нет.
-        -->
-        <span>${bill?.periodLabel
-          ? esc(bill.periodStale
-              ? `Последнее начисление · ${bill.periodLabel}`
-              : `Начислено за ${bill.periodLabel}`)
-          : 'Начисления'}</span>
+        <span>${esc(payTitle(bill))}</span>
         <span class="chev"><svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3L9 7L5 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
       </div>
-      <div class="pay-amt">${bill?.sumKopecks != null ? money(bill.sumKopecks) : '—'}</div>
+      <!--
+        Прочерк, а не «0,00 ₽», пока квитанций не приносили: ноль читается
+        как «мы посчитали, и долгов нет», хотя считать было нечего.
+      -->
+      <div class="pay-amt" style="${bill?.overdueCount ? 'color:var(--negative)' : ''}">
+        ${bill?.hasBills ? money(bill.outstandingKopecks) : '—'}
+      </div>
       <div class="pay-card-bottom">
-        <span class="pay-due">
-          ${bill?.billCount > 1
-            // Сумма собрана из нескольких квитанций: ЖКУ, свет, вывоз мусора.
-            // Без пояснения она выглядит завышенной и вызывает недоверие
-            ? `${esc(bill.billCount)} ${plural(bill.billCount, 'квитанция', 'квитанции', 'квитанций')} за квартиру`
-            // Дома нет в реестре управляющих организаций: молчать нельзя,
-            // иначе непонятно, почему не работают заявки
-            : esc(property.ukName ?? 'управляющая компания не определена')}
-        </span>
+        <span class="pay-due">${esc(payNote(bill))}</span>
         <span class="pay-quickbtn tappable" data-action="pay">Оплатить</span>
       </div>
     </button>
+
+    ${me.pendingRequests?.length ? renderAccessRequests(me.pendingRequests) : ''}
+
+    ${councilCard(state)}
 
     <!--
       Квитанция приходит каждый месяц, и это самое частое действие после
@@ -453,6 +507,71 @@ export function propertyTitle(p) {
  * а `home.js` не импортирует ни один из них — так не возникает кольца
  * импортов.
  */
+/**
+ * Та же правда одной строкой — для списков, где кнопке места нет.
+ *
+ * ЗАЧЕМ ОТДЕЛЬНО. В профиле стоял свой тернарник на три ветки, и случая
+ * частного дома в нём не было: второй житель своего дома читал там
+ * «У дома нет ни председателя, ни доступного кабинета УК» — про соседей
+ * и про управляющую компанию, которых у частного дома не бывает. Пока
+ * веток две в двух местах, они расходятся; здесь они одни.
+ */
+export function waitingHint(p) {
+  if (p.deciders?.chairman) {
+    return 'Доступ к дому и соседям подтверждает председатель совета дома';
+  }
+  if (p.deciders?.dispatcher) {
+    return 'У дома пока нет председателя — попросите УК его назначить';
+  }
+  if (p.houseManagement?.form === 'private') {
+    return 'Свой дом: подтверждать некому и нечего. Если вы живёте здесь '
+      + 'не один, попросите хозяина прислать код приглашения';
+  }
+  if (p.houseClaimAt) {
+    return 'Заявка на подключение дома подана — мы разберём её вручную';
+  }
+  return 'У дома пока нет ни председателя, ни кабинета управляющей организации';
+}
+
+/**
+ * Содержимое шторки «ожидает».
+ *
+ * ПОЧЕМУ ШТОРКА. До 15 сентября это стояло на главной двумя карточками
+ * над оплатой — при каждом входе, хотя нужно в основном один раз.
+ * Главная ожидающего жителя выглядела перегруженной ровно тогда, когда
+ * человек впервые в неё попадает. Теперь пометка «ожидает» в шапке
+ * открывает этот лист.
+ *
+ * Ничего не убрано: «Проверить» и код приглашения достижимы в одно
+ * касание. Без них человек застревал — это находки аудита 11 сентября.
+ * Поле кода носит те же id, что и на экране входа: обработчик в main.js
+ * один на оба места.
+ */
+export function pendingSheetMarkup(p) {
+  return html`
+    <div class="meter-name">Заявка ждёт подтверждения</div>
+    <div class="dt-p" style="font-size:15px;color:var(--tx-2);margin-top:6px">
+      ${waitingText(p)}
+    </div>
+    <div class="dt-p" style="font-size:14px;color:var(--tx-2)">
+      ${p.houseManagement?.orgHasCabinet
+        ? 'Начисления, счётчики, аналитика и обращение в управляющую компанию работают уже сейчас.'
+        : 'Начисления, счётчики, аналитика и обращение работают уже сейчас — запись сохранится, даже если адресата пока нет.'}
+    </div>
+    <div class="field-error" id="pendingStatus"></div>
+    <button class="btn-primary secondary" data-action="check-access">Проверить</button>
+
+    <div class="field-label" style="margin-top:22px">Есть код от собственника?</div>
+    <div class="dt-p" style="font-size:14px;color:var(--tx-2);margin-top:0">
+      Если собственник прислал вам код приглашения, введите его — квитанция не нужна.
+    </div>
+    <input type="text" id="inviteCode" placeholder="Например, K7MD9P"
+           autocomplete="off" autocapitalize="characters"
+           style="letter-spacing:.16em;text-transform:uppercase">
+    <div class="field-error" id="inviteErr"></div>
+    <button class="btn-primary secondary" data-action="redeem-invite">Войти по коду</button>`;
+}
+
 export function waitingText(p) {
   if (p.deciders?.chairman) {
     return `Доступ к дому и соседям подтверждает председатель совета дома.
@@ -497,10 +616,41 @@ export function waitingText(p) {
 export function askOperatorBlock(p, { indent = false } = {}) {
   if (!p.houseManagement?.canAskOperator) return '';
 
+  const style = `font-size:14px;color:var(--tx-2)${indent ? ';margin-top:10px' : ''}`;
+
+  /**
+   * Заявка уже подана — тогда это СОСТОЯНИЕ, а не кнопка.
+   *
+   * Пока `/api/me` о поданной заявке молчал, экран после нажатия
+   * не менялся ни на букву: тот же текст, та же кнопка, и единственным
+   * следом был тост, исчезающий за секунды. Человек читал «это делается
+   * один раз» и видел кнопку, которую уже нажимал. Проверено на живом
+   * стенде 11 сентября.
+   */
+  if (p.houseClaimAt) {
+    return html`
+      <div class="dt-p" style="${style}">
+        Заявка на подключение дома подана ${esc(formatDate(p.houseClaimAt))}.
+        Мы разберём её вручную и пришлём ответ — повторять не нужно.
+      </div>`;
+  }
+
+  /**
+   * Организация может быть известна, а кабинета у неё не быть.
+   *
+   * Прежний текст «за вашим домом не закреплена ни управляющая компания,
+   * ни председатель» показывался и в этом случае — в трёх сантиметрах
+   * от строки, где та же компания названа по имени. Проверено вживую:
+   * приложение на одном экране называло УК и отрицало её.
+   */
   return html`
-    <div class="dt-p" style="font-size:14px;color:var(--tx-2)${indent ? ';margin-top:10px' : ''}">
-      За вашим домом не закреплена ни управляющая компания, ни
-      председатель. Расскажите о доме — мы подключим его вручную.
+    <div class="dt-p" style="${style}">
+      ${p.houseManagement.orgName
+        ? html`За домом закреплена «${esc(p.houseManagement.orgName)}», но кабинета
+               в сервисе у неё пока нет, а председателя у дома ещё не выбрали.
+               Расскажите о доме — мы подключим его вручную.`
+        : `За вашим домом не закреплена ни управляющая компания, ни
+           председатель. Расскажите о доме — мы подключим его вручную.`}
       Это делается один раз.
     </div>
     <button class="btn-primary" ${indent ? 'style="margin-top:10px"' : ''}
